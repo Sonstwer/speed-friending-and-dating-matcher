@@ -175,25 +175,50 @@ _INDEX_HTML = """
   <title>Speed Friending & Dating Matcher</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
-    .card { border: 1px solid #eee; border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1rem; box-shadow: 0 1px 6px rgba(0,0,0,.04); }
+    :root { --card-bg: rgba(255,255,255,0.92); --card-border: rgba(255,255,255,0.7); }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 2rem;
+      min-height: 100vh;
+      /* Diagonal verlaufender Regenbogen */
+      background: linear-gradient(
+        135deg,
+        #ff595e 0%,
+        #ffca3a 20%,
+        #8ac926 40%,
+        #1982c4 60%,
+        #6a4c93 80%,
+        #ff595e 100%
+      );
+      background-attachment: fixed;
+    }
+    .card {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1rem 1.2rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,.12);
+      background: var(--card-bg);
+      backdrop-filter: blur(6px);
+    }
     h1 { margin-top: 0; }
     table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
-    th, td { border: 1px solid #ddd; padding: .4rem .6rem; }
+    th, td { border: 1px solid #e9e9e9; padding: .45rem .6rem; }
     th { background: #f7f7f7; text-align: left; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
     .btn { display: inline-block; padding: .6rem 1rem; border-radius: 8px; background: #111; color: #fff; text-decoration: none; border: none; cursor: pointer; }
     .btn.secondary { background: #444; }
     .row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
-    input[type="text"], input[type="file"] { padding: .4rem .6rem; border-radius: 8px; border: 1px solid #ccc; min-width: 320px; }
-    .muted { color: #666; font-size: .9em; }
+    input[type="text"], input[type="file"] { padding: .4rem .6rem; border-radius: 8px; border: 1px solid #ccc; min-width: 320px; background: #fff; }
+    .muted { color: #333; font-size: .9em; }
     .pill { display:inline-block; padding: .2rem .5rem; border:1px solid #ddd; border-radius:999px; margin-left:.5rem; font-size:.85em; background:#fafafa;}
+    .header { color:#fff; text-shadow: 0 2px 8px rgba(0,0,0,.35); }
   </style>
 </head>
 <body>
   <div class="grid">
     <div class="card">
-      <h1>Speed Friending & Dating Matcher</h1>
+      <h1 class="header">Speed Friending & Dating Matcher</h1>
       <form action="{{ url_for('ui_match') }}" method="post" enctype="multipart/form-data">
         <div class="row" style="margin:.5rem 0">
           <label>CSV-Datei:
