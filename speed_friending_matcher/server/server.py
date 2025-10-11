@@ -5,6 +5,7 @@ Flask-Webserver für Speed-Friending/Dating mit:
 - /        : HTML-UI (Upload) -> zeigt Match-Tabellen & Download-Button
 - /ui/match: POST-Handler für das UI
 - /api/match/dual: liefert ZIP (per Upload oder file_token)
+- /example/dual_interest_sample.csv: kleine Beispiel-CSV zum Testen
 Robust: Fallback-Importer/-Matcher, falls Projektmodule fehlen.
 """
 
@@ -19,10 +20,10 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import (
-    Flask, request, jsonify, render_template_string, make_response
+    Flask, request, jsonify, render_template_string, make_response, send_file
 )
 
-# ========================== Robust Project Imports ==========================
+# ========================== Projekt-Imports (robust) =========================
 try:
     from ..importer.csvimporter import CSVImporter as _ProjectCSVImporter
 except Exception:
@@ -34,7 +35,7 @@ except Exception:
     _ProjectSimpleMatcher = None
 
 
-# ============================= Fallback Importer ============================
+# ============================= Fallback Importer =============================
 def _parse_id_list(value: str):
     if not value:
         return set()
@@ -119,7 +120,7 @@ else:
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Upload-Limit
 
-# Startseite nie cachen (sonst sieht man CSS-Änderungen nicht)
+# Startseite nie cachen (CSS-Änderungen sofort sichtbar)
 @app.after_request
 def add_no_cache(resp):
     if request.path == "/":
@@ -141,16 +142,26 @@ def _build_matches(people: dict, cols: List[str]) -> Dict[str, List[Tuple[int, i
     return out
 
 
-def _zip_from_matches(people: dict, matches_by_label: Dict[str, List[Tuple[int, int]]], name_prefix: str = "matches") -> bytes:
+def _zip_from_matches(
+    people: dict,
+    matches_by_label: Dict[str, List[Tuple[int, int]]],
+    name_prefix: str = "matches"
+) -> bytes:
+    """Erzeugt ZIP (jetzt mit Telefon-Nummern)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for label, pairs in matches_by_label.items():
             s = StringIO()
             w = csv.writer(s)
-            w.writerow(["A_ID", "A_Name", "A_Email", "B_ID", "B_Name", "B_Email"])
+            # Telefon-Felder ergänzt
+            w.writerow(["A_ID", "A_Name", "A_Email", "A_Phone",
+                        "B_ID", "B_Name", "B_Email", "B_Phone"])
             for a, b in pairs:
                 pa, pb = people[a], people[b]
-                w.writerow([a, pa.get("name",""), pa.get("email",""), b, pb.get("name",""), pb.get("email","")])
+                w.writerow([
+                    a, pa.get("name",""), pa.get("email",""), pa.get("phone",""),
+                    b, pb.get("name",""), pb.get("email",""), pb.get("phone","")
+                ])
             zf.writestr(f"{name_prefix}_{label}.csv", s.getvalue())
     return buf.getvalue()
 
@@ -185,7 +196,7 @@ _INDEX_HTML = """
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       margin: 2rem;
       min-height: 100vh;
-      /* Diagonal verlaufender Regenbogen */
+      /* Diagonaler Regenbogen-Verlauf */
       background: linear-gradient(
         135deg,
         #ff595e 0%,
@@ -206,7 +217,10 @@ _INDEX_HTML = """
       background: var(--card-bg);
       backdrop-filter: blur(6px);
     }
-    h1 { margin-top: 0; }
+    h1 { margin: 0; }
+    .titlebar { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; }
+    .links a { text-decoration:none; margin-right:.6rem; font-weight:600; }
+    .links a span { margin-right:.25rem; }
     table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
     th, td { border: 1px solid #e9e9e9; padding: .45rem .6rem; }
     th { background: #f7f7f7; text-align: left; }
@@ -223,8 +237,16 @@ _INDEX_HTML = """
 <body>
   <div class="grid">
     <div class="card">
-      <h1 class="header">Speed Friending & Dating Matcher</h1>
-      <form action="{{ url_for('ui_match') }}" method="post" enctype="multipart/form-data">
+      <div class="titlebar">
+        <h1 class="header">Speed Friending & Dating Matcher</h1>
+        <div class="links">
+          <a href="/" title="Home"><span>🌈</span>Home</a>
+          <a href="/api/match/dual" title="API (ZIP per GET mit file_token)"><span>🌈</span>API</a>
+          <a href="https://github.com/Sonstwer/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>GitHub</a>
+          <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV herunterladen"><span>🌈</span>Sample CSV</a>
+        </div>
+      </div>
+      <form action="{{ url_for('ui_match') }}" method="post" enctype="multipart/form-data" style="margin-top:.5rem">
         <div class="row" style="margin:.5rem 0">
           <label>CSV-Datei:
             <input type="file" name="file" required />
@@ -243,7 +265,7 @@ _INDEX_HTML = """
         </div>
         <div class="row" style="margin-top:.5rem">
           <button class="btn" type="submit">Auswerten</button>
-          <span class="muted">CSV-Format: ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship …</span>
+          <span class="muted">CSV: ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship …</span>
         </div>
       </form>
     </div>
@@ -255,16 +277,23 @@ _INDEX_HTML = """
           <h3>{{ label }}</h3>
           {% if rows %}
             <table>
-              <thead><tr><th>A_ID</th><th>A_Name</th><th>A_Email</th><th>B_ID</th><th>B_Name</th><th>B_Email</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>A_ID</th><th>A_Name</th><th>A_Email</th><th>A_Phone</th>
+                  <th>B_ID</th><th>B_Name</th><th>B_Email</th><th>B_Phone</th>
+                </tr>
+              </thead>
               <tbody>
                 {% for a,b in rows %}
                 <tr>
                   <td>{{ people[a].id }}</td>
                   <td>{{ people[a].name }}</td>
                   <td>{{ people[a].email }}</td>
+                  <td>{{ people[a].phone }}</td>
                   <td>{{ people[b].id }}</td>
                   <td>{{ people[b].name }}</td>
                   <td>{{ people[b].email }}</td>
+                  <td>{{ people[b].phone }}</td>
                 </tr>
                 {% endfor %}
               </tbody>
@@ -310,7 +339,6 @@ def ui_match():
     event_name = (request.form.get("event") or "matches").strip()
 
     token = _save_temp_csv_and_get_token(f)
-
     tmp_path = TMP_DIR / f"{token}.csv"
     importer = CSVImporter(str(tmp_path))
     people = importer.load(interested_cols=tuple(cols))
@@ -395,6 +423,25 @@ def api_match_dual():
     return resp
 
 
+# =============================== Beispiel-CSV ================================
+_SAMPLE_CSV = """ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship
+1,Alice,alice@example.com,+4311111,"2;3","2","3"
+2,Bob,bob@example.com,+4322222,"1;3","1",""
+3,Chris,chris@example.com,+4333333,"1;2","","1;2"
+4,Dana,dana@example.com,+4344444,"2;3","2;3","1"
+5,Erik,erik@example.com,+4355555,"","4","1;3"
+"""
+
+@app.route("/example/dual_interest_sample.csv", methods=["GET"])
+def example_csv():
+    return make_response((_SAMPLE_CSV, 200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": "attachment; filename=dual_interest_sample.csv",
+        "Cache-Control": "no-cache",
+    }))
+
+
 # ============================== Main (Debug run) ============================
 if __name__ == "__main__":
+    # Produktion läuft über Gunicorn in systemd
     app.run(host="0.0.0.0", port=5000, debug=False)
