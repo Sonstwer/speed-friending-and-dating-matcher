@@ -311,7 +311,7 @@ _INDEX_HTML = """
             <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV herunterladen"><span>🌈</span>Sample CSV</a>
           </div>
         </div>
-        """ + __THEME_TOGGLE_HTML + """
+        """ + _THEME_TOGGLE_HTML + """
       </div>
 
       <form action="/ui/match" method="post" enctype="multipart/form-data" style="margin-top:.5rem">
@@ -414,7 +414,7 @@ _CSV_BUILDER_HTML = """
         <a href="/help/mail-merge" title="Mail-Merge Hilfe"><span>🌈</span>Mail-Merge Hilfe</a>
         <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV"><span>🌈</span>Sample CSV</a>
       </div>
-      """ + __THEME_TOGGLE_HTML + """
+      """ + _THEME_TOGGLE_HTML + """
     </div>
 
     <h1 style="margin:0; color:#000;">CSV-Builder</h1>
@@ -653,7 +653,7 @@ _MAIL_MERGE_HELP_HTML = """
   <div class="card">
     <div class="titlebar">
       <h1 style="margin:0; color:#000;">Mail-Merge (Thunderbird) – Kurzanleitung</h1>
-      """ + __THEME_TOGGLE_HTML + """
+      """ + _THEME_TOGGLE_HTML + """
     </div>
     <p class="note">Mit dem Export „Mail-Merge“ kannst du deine Matches in einer CSV + E-Mail-Vorlage exportieren und in Thunderbird personalisiert verschicken.</p>
 
