@@ -182,7 +182,7 @@ def _build_mailmerge_csv_and_template(people: dict, matches_by_label: Dict[str, 
     template_text = "\n".join(lines)
     return csv_text, template_text
 
-# ========================= Gemeinsames CSS + Dark Mode =======================
+# ========================= Gemeinsames CSS + Themes ==========================
 _BASE_STYLE = """
 :root {
   color-scheme: light dark;
@@ -190,31 +190,46 @@ _BASE_STYLE = """
   --fg: #111;
   --muted: #444;
   --card-bg: rgba(255,255,255,0.92);
-  --card-border: rgba(255,255,255,0.7);
+  --card-border: rgba(0,0,0,0.08);
   --btn-bg: #111;
   --btn-fg: #fff;
   --btn2-bg: #444;
+  --bg-image: linear-gradient(135deg,#ff595e 0%,#ffca3a 20%,#8ac926 40%,#1982c4 60%,#6a4c93 80%,#ff595e 100%);
 }
 :root[data-theme="dark"] {
   --bg: #0c0f12;
   --fg: #eee;
   --muted: #aaa;
   --card-bg: rgba(18,22,27,0.88);
-  --card-border: rgba(255,255,255,0.08);
+  --card-border: rgba(255,255,255,0.10);
   --btn-bg: #e6e6e6;
   --btn-fg: #111;
   --btn2-bg: #777;
+  --bg-image: linear-gradient(135deg,#2a2a2a 0%,#3b3b3b 20%,#2d4a64 40%,#2c2f36 60%,#4b3b66 80%,#2a2a2a 100%);
+}
+:root[data-theme="contrast"] {
+  /* High-Contrast: keine Verlaufsgrafik, maximaler Kontrast */
+  --bg: #ffffff;
+  --fg: #000000;
+  --muted: #000000;
+  --card-bg: #ffffff;
+  --card-border: #000000;
+  --btn-bg: #000000;
+  --btn-fg: #ffffff;
+  --btn2-bg: #333333;
+  --bg-image: none;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme="light"]):not([data-theme="contrast"]) {
     --bg: #0c0f12;
     --fg: #eee;
     --muted: #aaa;
     --card-bg: rgba(18,22,27,0.88);
-    --card-border: rgba(255,255,255,0.08);
+    --card-border: rgba(255,255,255,0.10);
     --btn-bg: #e6e6e6;
     --btn-fg: #111;
     --btn2-bg: #777;
+    --bg-image: linear-gradient(135deg,#2a2a2a 0%,#3b3b3b 20%,#2d4a64 40%,#2c2f36 60%,#4b3b66 80%,#2a2a2a 100%);
   }
 }
 html, body { height: 100%; }
@@ -223,7 +238,7 @@ body {
   margin: 2rem;
   min-height: 100vh;
   color: var(--fg);
-  background: linear-gradient(135deg,#ff595e 0%,#ffca3a 20%,#8ac926 40%,#1982c4 60%,#6a4c93 80%,#ff595e 100%), var(--bg);
+  background: var(--bg-image), var(--bg);
   background-attachment: fixed;
 }
 .card { border: 1px solid var(--card-border); border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1rem; box-shadow: 0 10px 30px rgba(0,0,0,.12); background: var(--card-bg); backdrop-filter: blur(6px); }
@@ -251,11 +266,10 @@ _DARKMODE_SCRIPT = """
   const root = document.documentElement;
   try {
     const saved = localStorage.getItem('matcher-theme');
-    if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+    if (saved === 'light' || saved === 'dark' || saved === 'contrast') root.setAttribute('data-theme', saved);
   } catch(e) {}
   function setTheme(mode){
-    if(mode==='light'){ root.setAttribute('data-theme','light'); }
-    else if(mode==='dark'){ root.setAttribute('data-theme','dark'); }
+    if(mode==='light' || mode==='dark' || mode==='contrast'){ root.setAttribute('data-theme', mode); }
     else { root.removeAttribute('data-theme'); }
     try { localStorage.setItem('matcher-theme', mode||'auto'); } catch(e){}
   }
@@ -271,6 +285,7 @@ _THEME_TOGGLE_HTML = """
     <option value="">Auto</option>
     <option value="light">Light</option>
     <option value="dark">Dark</option>
+    <option value="contrast">High Contrast</option>
   </select>
 </div>
 <script>
@@ -300,7 +315,7 @@ _INDEX_HTML = """
     <div class="card">
       <div class="titlebar">
         <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
-          <h1 class="header" style="margin:0; color:#000;">Speed Friending & Dating Matcher</h1>
+          <h1 class="header" style="margin:0;">Speed Friending & Dating Matcher</h1>
           <div class="links">
             <a href="/" title="Home"><span>🌈</span>Home</a>
             <a href="/ui/build-csv" title="CSV-Builder"><span>🌈</span>CSV-Builder</a>
@@ -340,7 +355,7 @@ _INDEX_HTML = """
 
     {% if results %}
       <div class="card">
-        <h2>Ergebnisse <span style="display:inline-block; padding:.2rem .5rem; border:1px solid #ddd; border-radius:999px; margin-left:.5rem; font-size:.85em; background:#fafafa;">{{ event_name or 'Fun Speed Dating and Friending' }}</span></h2>
+        <h2>Ergebnisse <span style="display:inline-block; padding:.2rem .5rem; border:1px solid var(--card-border); border-radius:999px; margin-left:.5rem; font-size:.85em; background:rgba(0,0,0,.03);">{{ event_name or 'Fun Speed Dating and Friending' }}</span></h2>
         {% for label, rows in results.items() %}
           <h3>{{ label }}</h3>
           {% if rows %}
@@ -417,7 +432,7 @@ _CSV_BUILDER_HTML = """
       """ + _THEME_TOGGLE_HTML + """
     </div>
 
-    <h1 style="margin:0; color:#000;">CSV-Builder</h1>
+    <h1 style="margin:0;">CSV-Builder</h1>
     <p class="note">Erfasse Teilnehmerdaten und erzeuge eine CSV mit den Spalten: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.</p>
 
     <form id="csvForm" action="/api/build-csv" method="post">
@@ -652,7 +667,7 @@ _MAIL_MERGE_HELP_HTML = """
 <body>
   <div class="card">
     <div class="titlebar">
-      <h1 style="margin:0; color:#000;">Mail-Merge (Thunderbird) – Kurzanleitung</h1>
+      <h1 style="margin:0;">Mail-Merge (Thunderbird) – Kurzanleitung</h1>
       """ + _THEME_TOGGLE_HTML + """
     </div>
     <p class="note">Mit dem Export „Mail-Merge“ kannst du deine Matches in einer CSV + E-Mail-Vorlage exportieren und in Thunderbird personalisiert verschicken.</p>
@@ -878,7 +893,7 @@ def api_match_dual():
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
-# =============================== API: Build CSV ==============================
+# ============================== API: Build CSV ===============================
 @app.route("/api/build-csv", methods=["POST"])
 def api_build_csv():
     ids = request.form.getlist("id[]")
@@ -914,6 +929,64 @@ def api_build_csv():
     resp = make_response(data)
     resp.headers["Content-Type"] = "text/csv; charset=utf-8"
     resp.headers["Content-Disposition"] = "attachment; filename=participants.csv"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+# ============================ Mail-Merge Export API ==========================
+@app.route("/export/mail-merge", methods=["GET", "POST"])
+def export_mail_merge():
+    cols = [c.strip() for c in (request.values.get("interested-columns") or "Interested").split(",") if c.strip()]
+    labels_raw = request.values.get("labels")
+    labels = [l.strip() for l in labels_raw.split(",")] if labels_raw else cols
+    event_name = (request.values.get("event") or DEFAULT_EVENT).strip() or DEFAULT_EVENT
+
+    # CSV beziehen: upload (multipart) oder token
+    f = request.files.get("file")
+    if f:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+        try:
+            f.save(tmp); tmp.flush()
+            people = _load_people_from_csv(tmp.name, tuple(cols))
+        finally:
+            try:
+                tmp.close(); os.unlink(tmp.name)
+            except Exception:
+                pass
+    else:
+        token = request.values.get("file_token")
+        if not token:
+            return jsonify({"error": "No CSV provided. Use multipart 'file' or 'file_token' param."}), 400
+        try:
+            people = _load_people_from_token(token, cols)
+        except FileNotFoundError:
+            return jsonify({"error": "Invalid or expired file_token"}), 400
+        finally:
+            try:
+                (TMP_DIR / f"{token}.csv").unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    # Matches bilden
+    matches_raw = _build_matches(people, cols)
+    # Labels den Spalten zuordnen (Reihenfolge beachten)
+    matches_by_label = {labels[i]: matches_raw[cols[i]] for i in range(len(cols))}
+
+    mm_csv, mm_template = _build_mailmerge_csv_and_template(people, matches_by_label, event_name)
+
+    # ZIP bauen
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mailmerge.csv", mm_csv)
+        zf.writestr("email_template.txt", mm_template)
+        # zur Referenz auch die Matches als CSVs mitgeben
+        packed = _zip_from_matches(people, matches_by_label, name_prefix="matches")
+        zf.writestr("matches_bundle.zip", packed)
+    data = mem.getvalue()
+
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "application/zip"
+    resp.headers["Content-Disposition"] = "attachment; filename=mailmerge_export.zip"
+    resp.headers["Content-Length"] = str(len(data))
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
