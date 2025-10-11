@@ -19,13 +19,11 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import (
-    Flask, request, send_file, jsonify,
-    render_template_string, redirect, url_for, make_response,
+    Flask, request, jsonify, render_template_string, make_response
 )
 
 # ========================== Robust Project Imports ==========================
 try:
-    # Projektstruktur (dein Repo)
     from ..importer.csvimporter import CSVImporter as _ProjectCSVImporter
 except Exception:
     _ProjectCSVImporter = None
@@ -74,7 +72,6 @@ class _FallbackCSVImporter:
             entry["interested_by_col"] = {}
             for col in interested_cols:
                 entry["interested_by_col"][col] = _parse_id_list(r.get(col, ""))
-            # Fallback für alte CSVs
             if "Interested" in r and "Interested" not in interested_cols:
                 entry["interested_by_col"]["Interested"] = _parse_id_list(r.get("Interested", ""))
             people[pid] = entry
@@ -121,6 +118,14 @@ else:
 # ================================ Flask App =================================
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Upload-Limit
+
+# Startseite nie cachen (sonst sieht man CSS-Änderungen nicht)
+@app.after_request
+def add_no_cache(resp):
+    if request.path == "/":
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
 
 # Temp-Verzeichnis für "file_token"-Workflows (UI -> ZIP)
 TMP_DIR = Path("/tmp/matcher_uploads")
@@ -270,7 +275,6 @@ _INDEX_HTML = """
         {% endfor %}
 
         <form class="row" style="margin-top:1rem" method="get" action="{{ url_for('api_match_dual') }}">
-          <!-- Download-Button nutzt file_token-Workflow -->
           <input type="hidden" name="file_token" value="{{ file_token }}">
           <input type="hidden" name="interested-columns" value="{{ interested_columns|join(',') }}">
           <input type="hidden" name="labels" value="{{ labels|join(',') }}">
@@ -305,16 +309,13 @@ def ui_match():
 
     event_name = (request.form.get("event") or "matches").strip()
 
-    # Datei serverseitig ablegen (Token-Workflow), damit Download-Button ohne erneuten Upload funktioniert
     token = _save_temp_csv_and_get_token(f)
 
-    # Für das UI direkt auswerten
     tmp_path = TMP_DIR / f"{token}.csv"
     importer = CSVImporter(str(tmp_path))
     people = importer.load(interested_cols=tuple(cols))
     results = _build_matches(people, cols)
 
-    # people in ein "objektartiges" Dict casten für Template (Zugriff per people[pid].name)
     class P: pass
     people_view = {}
     for pid, p in people.items():
@@ -346,7 +347,6 @@ def api_match_dual():
       - labels: optional; gleiche Anzahl wie interested-columns
       - event: optional; Dateipräfix für ZIP-Inhalte
     """
-    # 1) Spalten bestimmen
     cols = [c.strip() for c in (request.values.get("interested-columns") or "Interested").split(",") if c.strip()]
     labels_raw = request.values.get("labels")
     labels = [l.strip() for l in labels_raw.split(",")] if labels_raw else cols
@@ -354,9 +354,7 @@ def api_match_dual():
         return jsonify({"error": "labels must have same count as interested-columns"}), 400
     name_prefix = (request.values.get("event") or "matches").strip() or "matches"
 
-    # 2) Dateiquelle: Upload oder Token
     people = None
-    # a) direkter Upload?
     f = request.files.get("file")
     if f:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
@@ -372,7 +370,6 @@ def api_match_dual():
             except Exception:
                 pass
     else:
-        # b) file_token?
         token = request.values.get("file_token")
         if not token:
             return jsonify({"error": "No CSV provided. Use multipart 'file' or 'file_token' param."}), 400
@@ -381,17 +378,14 @@ def api_match_dual():
         except FileNotFoundError:
             return jsonify({"error": "Invalid or expired file_token"}), 400
         finally:
-            # Token-Datei aufräumen (Einmal-Download)
             try:
                 (TMP_DIR / f"{token}.csv").unlink(missing_ok=True)
             except Exception:
                 pass
 
-    # 3) Matches bauen
     matches_raw = _build_matches(people, cols)
     matches_by_label = {labels[i]: matches_raw[cols[i]] for i in range(len(cols))}
 
-    # 4) ZIP erzeugen & senden (mit Content-Length)
     data = _zip_from_matches(people, matches_by_label, name_prefix=name_prefix)
     resp = make_response(data)
     resp.headers["Content-Type"] = "application/zip"
@@ -403,5 +397,4 @@ def api_match_dual():
 
 # ============================== Main (Debug run) ============================
 if __name__ == "__main__":
-    # Hinweis: Produktion läuft über Gunicorn in systemd
     app.run(host="0.0.0.0", port=5000, debug=False)
