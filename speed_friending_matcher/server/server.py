@@ -12,14 +12,17 @@ from flask import (
     Flask, request, jsonify, render_template_string, make_response
 )
 
+# =========================== Defaults / Konstanten ===========================
 DEFAULT_EVENT = "Fun Speed Dating and Friending"
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Upload-Limit
 
+# Temp-Verzeichnis für Upload-Tokens
 TMP_DIR = Path("/tmp/matcher_uploads")
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
+# Seiten nie cachen (CSS/HTML-Änderungen sofort sichtbar)
 @app.after_request
 def add_no_cache(resp):
     if request.path in ("/", "/ui/build-csv", "/offline/form", "/offline/form/pdf",
@@ -28,7 +31,7 @@ def add_no_cache(resp):
         resp.headers["Pragma"] = "no-cache"
     return resp
 
-# --------------------------- Helpers ---------------------------
+# ============================== Helper-Funktionen ===========================
 def _parse_id_list(value: str):
     if not value:
         return set()
@@ -137,6 +140,14 @@ def _format_partner_list(people: dict, id_list: List[int]) -> str:
     return "; ".join(out)
 
 def _build_mailmerge_csv_and_template(people: dict, matches_by_label: Dict[str, list], event_name: str):
+    """
+    Erzeugt:
+      - mailmerge.csv mit Spalten: To,Name,Event,MessageBody
+      - email_template.txt das {{MessageBody}} einbindet + Repo-Hinweis
+    Pro Person:
+      - Wenn Dating/Friendship leer => freundliche 'Sorry'-Nachricht
+      - Sonst aufbereitete Listen (beide Bereiche möglich)
+    """
     per_person = _aggregate_matches_per_person(people, matches_by_label)
     labels = list(matches_by_label.keys())
     dating_key = next((l for l in labels if l.lower().startswith("dating")), None)
@@ -176,7 +187,7 @@ def _build_mailmerge_csv_and_template(people: dict, matches_by_label: Dict[str, 
     )
     return csv_text, template_text
 
-# --------------------------- Styles / Theme ---------------------------
+# ========================= Gemeinsames CSS + Themes ==========================
 _BASE_STYLE = """
 :root {
   color-scheme: light dark;
@@ -202,6 +213,7 @@ _BASE_STYLE = """
   --bg-image: linear-gradient(135deg,#2a2a2a 0%,#3b3b3b 20%,#2d4a64 40%,#2c2f36 60%,#4b3b66 80%,#2a2a2a 100%);
 }
 :root[data-theme="contrast"] {
+  /* High-Contrast: keine Verlaufsgrafik, maximaler Kontrast */
   --bg: #ffffff;
   --fg: #000000;
   --muted: #000000;
@@ -292,7 +304,7 @@ _THEME_TOGGLE_HTML = """
 </script>
 """
 
-# --------------------------- HTML: Index ---------------------------
+# ================================ HTML: Index ================================
 _INDEX_HTML = """
 <!doctype html>
 <html lang="de">
@@ -324,9 +336,9 @@ _INDEX_HTML = """
 
       <p class="note" style="margin:.4rem 0 1rem 0;">
         Diese App nimmt eine Teilnehmer-CSV (<code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>)
-        und bildet daraus <strong>gegenseitige</strong> Matches – getrennt nach Dating und Freundschaft.
-        „All“ (optional) schränkt die möglichen Matches auf bestimmte IDs ein.
-        Ergebnis: Anzeige im Browser, ZIP-Export (CSV-Dateien) und <strong>Mail-Merge</strong>-Export für personalisierte Mails.
+        und bildet daraus **gegenseitige** Matches – getrennt nach Dating und Freundschaft.
+        <br/>„All“ (optional) schränkt die möglichen Matches auf bestimmte IDs ein.
+        Ergebnis: Anzeige im Browser, ZIP-Export (CSV-Dateien), sowie **Mail-Merge**-Export für personalisierte Mails.
       </p>
 
       <form action="/ui/match" method="post" enctype="multipart/form-data" style="margin-top:.5rem">
@@ -409,7 +421,7 @@ _INDEX_HTML = """
 </html>
 """
 
-# --------------------------- HTML: CSV-Builder ---------------------------
+# ================================ HTML: CSV-Builder ==========================
 _CSV_BUILDER_HTML = """
 <!doctype html>
 <html lang="de">
@@ -420,7 +432,6 @@ _CSV_BUILDER_HTML = """
   <style>""" + _BASE_STYLE + """
   .wrap { overflow:auto; }
   .narrow { width:50px; }
-  .error { color:#b21; padding:.4rem .6rem; background:#ffecec; border:1px solid #f3c2c2; border-radius:8px; margin:.6rem 0; }
   </style>
   """ + _DARKMODE_SCRIPT + """
 </head>
@@ -439,8 +450,6 @@ _CSV_BUILDER_HTML = """
     <h1 style="margin:0;">CSV-Builder</h1>
     <p class="note">Erfasse oder importiere eine CSV mit: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.
     Du kannst Dateien <strong>hochladen & direkt hier editieren</strong>.</p>
-
-    <div id="err" class="error" style="display:none;"></div>
 
     <div class="row" style="margin:.4rem 0 1rem 0;">
       <label>CSV importieren:
@@ -493,17 +502,12 @@ _CSV_BUILDER_HTML = """
     const evalNowBtn = document.getElementById('evalNow');
     const uploadInput = document.getElementById('csvUpload');
     const clearBtn = document.getElementById('clearRows');
-    const errBox = document.getElementById('err');
 
-    function showErr(msg){
-      errBox.textContent = msg;
-      errBox.style.display = 'block';
-      setTimeout(()=>{ errBox.style.display='none'; }, 8000);
-    }
     function esc(v){
       return String(v == null ? '' : v)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
+
     function newRow(data){
       data = data || {};
       const html =
@@ -519,6 +523,7 @@ _CSV_BUILDER_HTML = """
       tr.innerHTML = html;
       tbody.appendChild(tr);
     }
+
     function tableToCSV(){
       const rows = Array.from(tbody.querySelectorAll('tr'));
       const data = rows.map(tr => {
@@ -545,46 +550,8 @@ _CSV_BUILDER_HTML = """
       return lines.join("\\n");
     }
 
-    // ---------- Robuster CSV-Import ----------
-    // Normalisiert Header: lowercased, nur alnum, '_' → z.B. "Interested Dating" -> "interesteddating"
-    function normHeader(s){
-      return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'');
-    }
-    const headerMapTargets = {
-      id: ['id'],
-      name: ['name'],
-      email: ['email','mail'],
-      phone: ['phone','telefon','tel'],
-      all: ['all'],
-      interesteddating: ['interesteddating','interested_dating','interested dating','dating'],
-      interestedfriendship: ['interestedfriendship','interested_friendship','interested friendship','friendship','friends'],
-    };
-    function resolveHeaderIndex(header){
-      const norm = header.map(normHeader);
-      function findAny(targets){
-        for (let t of targets){
-          const idx = norm.indexOf(normHeader(t));
-          if (idx !== -1) return idx;
-        }
-        return -1;
-      }
-      const idx = {
-        id: findAny(headerMapTargets.id),
-        name: findAny(headerMapTargets.name),
-        email: findAny(headerMapTargets.email),
-        phone: findAny(headerMapTargets.phone),
-        all: findAny(headerMapTargets.all),
-        dating: findAny(headerMapTargets.interesteddating),
-        friend: findAny(headerMapTargets.interestedfriendship),
-      };
-      return idx;
-    }
-    // CSV-Parser (unterstützt Quotes, CRLF, BOM)
+    // simpler CSV-Parser für Import (unterstützt Quotes)
     function parseCSV(text){
-      // Strip UTF-8 BOM
-      if (text.charCodeAt(0) === 0xFEFF) {
-        text = text.slice(1);
-      }
       const rows = [];
       let i=0, field='', row=[], inQ=false;
       while(i < text.length){
@@ -602,15 +569,23 @@ _CSV_BUILDER_HTML = """
           field += c; i++;
         }
       }
+      // letztes Feld
       row.push(field);
-      if(row.length>1 || (row.length===1 && row[0] !== '')) rows.push(row);
-      // Trimme leere trailing-Zeilen
-      return rows.filter(r => r.some(cell => String(cell).trim() !== ''));
+      if(row.some(x => x !== '' || rows.length === 0)) rows.push(row);
+      return rows;
     }
-    function padRow(r, len){
-      const out = r.slice(0, len);
-      while (out.length < len) out.push('');
-      return out;
+
+    function fromHeaderMap(cols, row){
+      function get(col){ const idx = cols.indexOf(col); return idx>=0 ? (row[idx]||'') : ''; }
+      return {
+        id: get('ID'),
+        name: get('Name'),
+        email: get('Email'),
+        phone: get('Phone'),
+        all: get('All'),
+        dating: get('InterestedDating'),
+        friend: get('InterestedFriendship'),
+      };
     }
 
     addRowBtn.addEventListener('click', () => newRow());
@@ -623,56 +598,27 @@ _CSV_BUILDER_HTML = """
     uploadInput.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
       if(!file) return;
-      try {
-        const text = await file.text(); // Browser decodiert UTF-8 automatisch
-        const rows = parseCSV(text);
-        if(!rows.length){ showErr('Leere CSV.'); return; }
-
-        const header = rows[0].map(h => String(h).trim());
-        const idx = resolveHeaderIndex(header);
-        const missing = [];
-        if (idx.id < 0) missing.push('ID');
-        if (idx.name < 0) missing.push('Name');
-        if (idx.email < 0) missing.push('Email');
-        if (idx.phone < 0) missing.push('Phone');
-        if (idx.all < 0) missing.push('All');
-        if (idx.dating < 0) missing.push('InterestedDating');
-        if (idx.friend < 0) missing.push('InterestedFriendship');
-        if (missing.length){
-          showErr("CSV-Header unvollständig: fehlt " + missing.join(", ") +
-                  ". Gefunden: [" + header.join(", ") + "]");
-          return;
-        }
-
-        tbody.innerHTML = '';
-        for (let i=1; i<rows.length; i++){
-          const r = padRow(rows[i], header.length);
-          const data = {
-            id: r[idx.id] || '',
-            name: r[idx.name] || '',
-            email: r[idx.email] || '',
-            phone: r[idx.phone] || '',
-            all: r[idx.all] || '',
-            dating: r[idx.dating] || '',
-            friend: r[idx.friend] || '',
-          };
-          // Leere Gesamtzeile überspringen
-          if(Object.values(data).every(v => String(v).trim()==='')) continue;
-          newRow(data);
-        }
-        if (!tbody.children.length){
-          showErr("CSV verarbeitet, aber keine verwertbaren Zeilen gefunden.");
-        }
-      } catch (err) {
-        console.error(err);
-        showErr("Importfehler: " + (err?.message || String(err)));
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if(!rows.length){ alert('Leere CSV.'); return; }
+      // Header suchen
+      const header = rows[0].map(h => h.trim());
+      const need = ["ID","Name","Email","Phone","All","InterestedDating","InterestedFriendship"];
+      for (const n of need){
+        if(!header.includes(n)){ alert("CSV-Header fehlt Spalte: " + n); return; }
+      }
+      tbody.innerHTML = '';
+      for (let i=1; i<rows.length; i++){
+        const data = fromHeaderMap(header, rows[i]);
+        if(Object.values(data).every(v => String(v).trim()==='')) continue;
+        newRow(data);
       }
     });
 
     evalNowBtn.addEventListener('click', async (e) => {
       e.preventDefault();
       const csv = tableToCSV();
-      if(!csv.trim()){ showErr("Bitte mindestens eine Zeile erfassen oder importieren."); return; }
+      if(!csv.trim()){ alert("Bitte mindestens eine Zeile erfassen oder importieren."); return; }
       const file = new File([csv], "participants.csv", {type:"text/csv"});
       const fd = new FormData();
       fd.append("file", file);
@@ -690,7 +636,7 @@ _CSV_BUILDER_HTML = """
 </html>
 """
 
-# --------------------------- HTML: Offline Formular ---------------------------
+# ================================ HTML: Offline Formular =====================
 _OFFLINE_FORM_HTML = """
 <!doctype html>
 <html lang="de">
@@ -791,7 +737,7 @@ _OFFLINE_FORM_HTML = """
 </html>
 """
 
-# --------------------------- Mail-Merge Hilfe ---------------------------
+# ================================ HTML: Mail-Merge Hilfe =====================
 _MAIL_MERGE_HELP_HTML = """
 <!doctype html>
 <html lang="de">
@@ -821,8 +767,9 @@ _MAIL_MERGE_HELP_HTML = """
       <li>Auf der Startseite CSV hochladen oder im CSV-Builder erfassen und auswerten.</li>
       <li>„Mail-Merge Export (Thunderbird)“ anklicken ⇒ ZIP speichern & entpacken.</li>
       <li>Thunderbird: neue E-Mail erstellen (noch nicht senden).</li>
-      <li>Betreff/Text aus <code>email_template.txt</code> kopieren. Platzhalter: <code>{{To}}</code>, <code>{{Name}}</code>, <code>{{Event}}</code>, <code>{{MessageBody}}</code>.</li>
-      <li>Im Verfassen-Fenster: <em>Menü</em> → <strong>Mail Merge…</strong> → CSV <code>mailmerge.csv</code> wählen. Spalte <code>To</code> = Empfänger-Adresse.</li>
+      <li>Betreff/Text aus <code>email_template.txt</code> kopieren. Wichtige Platzhalter: <code>{{To}}</code>, <code>{{Name}}</code>, <code>{{Event}}</code>, <code>{{MessageBody}}</code>.</li>
+      <li>Im Verfassen-Fenster: <em>Menü</em> → <strong>Mail Merge…</strong></li>
+      <li>CSV-Datei <code>mailmerge.csv</code> wählen. Spalte <code>To</code> = Empfänger-Adresse (oder die Zeile „Empfänger (To): {{To}}“ zum Prüfen nutzen).</li>
     </ol>
 
     <p><a class="btn" href="/" title="Zurück">← Zurück</a></p>
@@ -831,7 +778,7 @@ _MAIL_MERGE_HELP_HTML = """
 </html>
 """
 
-# --------------------------- Routes ---------------------------
+# ================================== Routes ==================================
 @app.route("/", methods=["GET"])
 def index():
     return render_template_string(_INDEX_HTML, results=None)
@@ -877,6 +824,7 @@ def ui_match():
 def ui_build_csv():
     return render_template_string(_CSV_BUILDER_HTML)
 
+# ================================ Offline Formular ==========================
 @app.route("/offline/form", methods=["GET"])
 def offline_form():
     return render_template_string(_OFFLINE_FORM_HTML)
@@ -891,6 +839,10 @@ def offline_form_download():
 
 @app.route("/offline/form/pdf", methods=["GET"])
 def offline_form_pdf():
+    """
+    Erstellt ein sehr einfaches A4-PDF (ReportLab, falls verfügbar).
+    Fallback: Liefert die HTML-Version, wenn ReportLab fehlt.
+    """
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet
@@ -969,12 +921,15 @@ def offline_form_pdf():
         resp.headers["Cache-Control"] = "no-cache"
         return resp
     except Exception:
+        # Fallback: HTML-Datei anbieten
         return offline_form_download()
 
+# ================================ Mail-Merge Hilfe ==========================
 @app.route("/help/mail-merge", methods=["GET"])
 def help_mail_merge():
     return render_template_string(_MAIL_MERGE_HELP_HTML)
 
+# ================================ API (ZIP) =================================
 @app.route("/api/match/dual", methods=["GET", "POST"])
 def api_match_dual():
     cols = [c.strip() for c in (request.values.get("interested-columns") or "Interested").split(",") if c.strip()]
@@ -1021,6 +976,7 @@ def api_match_dual():
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
+# ============================== API: Build CSV ===============================
 @app.route("/api/build-csv", methods=["POST"])
 def api_build_csv():
     ids = request.form.getlist("id[]")
@@ -1059,6 +1015,7 @@ def api_build_csv():
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
+# ============================ Mail-Merge Export API ==========================
 @app.route("/export/mail-merge", methods=["GET", "POST"])
 def export_mail_merge():
     cols = [c.strip() for c in (request.values.get("interested-columns") or "Interested").split(",") if c.strip()]
@@ -1066,6 +1023,7 @@ def export_mail_merge():
     labels = [l.strip() for l in labels_raw.split(",")] if labels_raw else cols
     event_name = (request.values.get("event") or DEFAULT_EVENT).strip() or DEFAULT_EVENT
 
+    # CSV beziehen: upload (multipart) oder token
     f = request.files.get("file")
     if f:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
@@ -1091,15 +1049,18 @@ def export_mail_merge():
             except Exception:
                 pass
 
+    # Matches bilden
     matches_raw = _build_matches(people, cols)
     matches_by_label = {labels[i]: matches_raw[cols[i]] for i in range(len(cols))}
 
     mm_csv, mm_template = _build_mailmerge_csv_and_template(people, matches_by_label, event_name)
 
+    # ZIP bauen
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("mailmerge.csv", mm_csv)
         zf.writestr("email_template.txt", mm_template)
+        # zur Referenz auch die Matches als CSVs mitgeben
         packed = _zip_from_matches(people, matches_by_label, name_prefix="matches")
         zf.writestr("matches_bundle.zip", packed)
     data = mem.getvalue()
@@ -1111,6 +1072,7 @@ def export_mail_merge():
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
+# =============================== Beispiel-CSV Route ==========================
 _SAMPLE_CSV = """ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship
 1,Alex (they/them),alex@example.com,+4311111,"2;3;4","2;3","4"
 2,Quinn,quinn@example.com,+4322222,"1;3;5","1","3;5"
@@ -1132,5 +1094,7 @@ def example_csv():
         "Cache-Control": "no-cache",
     }))
 
+# ============================== Main (Debug run) ============================
 if __name__ == "__main__":
+    # Produktion läuft über Gunicorn in systemd
     app.run(host="0.0.0.0", port=5000, debug=False)
