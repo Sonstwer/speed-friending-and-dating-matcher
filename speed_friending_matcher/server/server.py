@@ -4,9 +4,11 @@ speed_friending_matcher.server.server
 Flask-Webserver für Speed-Friending/Dating mit:
 - /                 : HTML-UI (Upload) -> zeigt Match-Tabellen & Download-Button
 - /ui/match         : POST-Handler für das UI
-- /api/match/dual   : ZIP-Download (per Upload oder file_token)
+- /api/match/dual   : ZIP-Download (per Upload oder file_token)  [API existiert, aber in der UI nicht verlinkt]
 - /ui/build-csv     : CSV-Builder-UI (Zeilen erfassen)
 - /api/build-csv    : erzeugt CSV aus Formulardaten
+- /offline/form     : druckbare Offline-Formularseite mit Erklärungstext
+- /offline/form/download : lädt das Formular als HTML-Datei herunter
 - /example/dual_interest_sample.csv : Beispiel-CSV
 Robust: Fallback-Importer/-Matcher, falls Projektmodule fehlen.
 """
@@ -122,10 +124,10 @@ else:
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Upload-Limit
 
-# Startseite nie cachen (CSS-Änderungen sofort sichtbar)
+# Start-/Builder-/Offline-Seiten nie cachen
 @app.after_request
 def add_no_cache(resp):
-    if request.path in ("/", "/ui/build-csv"):
+    if request.path in ("/", "/ui/build-csv", "/offline/form"):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
     return resp
@@ -246,7 +248,7 @@ _INDEX_HTML = """
         <div class="links">
           <a href="/" title="Home"><span>🌈</span>Home</a>
           <a href="/ui/build-csv" title="CSV-Builder"><span>🌈</span>CSV-Builder</a>
-          <a href="/api/match/dual" title="API (ZIP per GET mit file_token)"><span>🌈</span>API</a>
+          <a href="/offline/form" title="Offline-Formular"><span>🌈</span>Offline-Formular</a>
           <a href="https://github.com/Sonstwer/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>GitHub (Fork)</a>
           <a href="https://github.com/machinekoder/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>Original</a>
           <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV herunterladen"><span>🌈</span>Sample CSV</a>
@@ -362,8 +364,8 @@ _CSV_BUILDER_HTML = """
       <h1>CSV-Builder</h1>
       <div class="links">
         <a href="/" title="Home"><span>🌈</span>Home</a>
+        <a href="/offline/form" title="Offline-Formular"><span>🌈</span>Offline-Formular</a>
         <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV"><span>🌈</span>Sample CSV</a>
-        <a href="https://github.com/machinekoder/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>Original</a>
       </div>
     </div>
 
@@ -417,11 +419,122 @@ _CSV_BUILDER_HTML = """
     }
 
     addRowBtn.addEventListener('click', () => newRow());
-
-    // Zwei Demozeilen vorbefüllen
     newRow({id:1, name:"Alice", email:"alice@example.com", phone:"+4311111", all:"2;3", dating:"2", friend:"3"});
     newRow({id:2, name:"Bob",   email:"bob@example.com",   phone:"+4322222", all:"1;3", dating:"1", friend:""});
   </script>
+</body>
+</html>
+"""
+
+# ================================ HTML: Offline Formular =====================
+_OFFLINE_FORM_HTML = """
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Offline-Formular – Speed Friending & Dating</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { background: #fff !important; }
+      .page { box-shadow: none !important; border: none !important; }
+    }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 2rem; background: #fafafa;
+    }
+    .actions { display:flex; gap:.6rem; margin-bottom:1rem; }
+    .btn { display:inline-block; padding:.55rem 1rem; border-radius:8px; background:#111; color:#fff; border:none; cursor:pointer; text-decoration:none; }
+    .btn.secondary { background:#444; }
+    .page {
+      background:#fff; padding:1.2rem 1.4rem; border:1px solid #e5e5e5; border-radius:10px;
+      max-width: 900px; margin:auto; box-shadow: 0 6px 24px rgba(0,0,0,.08);
+    }
+    h1, h2 { margin:.2rem 0; color:#000; }
+    p { color:#222; }
+    table { border-collapse: collapse; width: 100%; margin-top:.75rem; }
+    th, td { border:1px solid #ddd; padding:.45rem .6rem; vertical-align:top; }
+    th { background:#f7f7f7; text-align:left; }
+    .tiny { font-size:.9em; color:#333; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    .mb { margin-bottom: .75rem; }
+    .mt { margin-top: .75rem; }
+    .muted { color:#444; }
+    .foot { margin-top:1rem; font-size:.9em; color:#333; }
+    code { background:#f2f2f2; padding:.05rem .3rem; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <div class="no-print actions">
+    <a class="btn" href="/" title="Zurück">← Zurück</a>
+    <a class="btn secondary" href="/offline/form/download" title="Als Datei speichern">Als Datei herunterladen</a>
+    <button class="btn" onclick="window.print()">Drucken</button>
+  </div>
+
+  <div class="page">
+    <h1>Speed Friending & Dating – Offline-Formular</h1>
+    <p class="tiny muted">Dieses Blatt erklärt kurz das Event und bietet Platz für deine Notizen & Likes. Nach dem Event kannst du deine Angaben in die Online-Seite übertragen oder abgeben.</p>
+
+    <h2>Wie funktioniert’s?</h2>
+    <ol>
+      <li>Du triffst mehrere Personen für kurze Gespräche („Runden“).</li>
+      <li>Nach jedem Gespräch kannst du ankreuzen, ob du die Person <strong>dating-interessant</strong> oder <strong>freundschaftlich interessant</strong> findest (oder beides).</li>
+      <li>Am Ende trägst du deine Likes online ein (oder gibst dieses Blatt beim Orga-Team ab).</li>
+    </ol>
+
+    <div class="two mb">
+      <div>
+        <strong>Deine Daten</strong>
+        <table class="mt">
+          <tr><th style="width:160px;">ID-Nummer</th><td>&nbsp;</td></tr>
+          <tr><th>Name</th><td>&nbsp;</td></tr>
+          <tr><th>Email</th><td>&nbsp;</td></tr>
+          <tr><th>Telefon</th><td>&nbsp;</td></tr>
+        </table>
+      </div>
+      <div>
+        <strong>Hinweise</strong>
+        <ul class="mt">
+          <li>Datenschutz: Gib nur Daten an, mit denen du dich wohl fühlst.</li>
+          <li>Likes bitte als <code>IDs</code> notieren (siehe Tabelle unten).</li>
+          <li><em>All</em> (optional): Wenn gesetzt, werden nur Matches aus dieser Liste gebildet.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Gesprächspartner & Notizen</h2>
+    <p class="muted tiny">Trage hier die IDs deiner Gesprächspartner ein. Markiere 👍 für Dating und 🤝 für Freundschaft.</p>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:70px;">ID</th>
+          <th>Name / Notizen</th>
+          <th style="width:140px;">Dating 👍</th>
+          <th style="width:180px;">Friendship 🤝</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for _ in range(12) %}
+        <tr>
+          <td>&nbsp;</td>
+          <td style="height:38px;">&nbsp;</td>
+          <td>&nbsp;</td>
+          <td>&nbsp;</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2 class="mt">Zusammenfassung (IDs mit Semikolon trennen)</h2>
+    <table>
+      <tr><th style="width:240px;">All (optional)</th><td>&nbsp;</td></tr>
+      <tr><th>InterestedDating</th><td>&nbsp;</td></tr>
+      <tr><th>InterestedFriendship</th><td>&nbsp;</td></tr>
+    </table>
+
+    <p class="foot">Online-Eingabe: <strong>match.sonsti.top</strong> → „CSV-Builder“ oder „Home“ (CSV-Upload). Format: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.</p>
+  </div>
 </body>
 </html>
 """
@@ -474,6 +587,22 @@ def ui_match():
 @app.route("/ui/build-csv", methods=["GET"])
 def ui_build_csv():
     return render_template_string(_CSV_BUILDER_HTML)
+
+
+# ================================ Offline Formular ==========================
+@app.route("/offline/form", methods=["GET"])
+def offline_form():
+    return render_template_string(_OFFLINE_FORM_HTML)
+
+
+@app.route("/offline/form/download", methods=["GET"])
+def offline_form_download():
+    # als Datei ausliefern
+    resp = make_response(_OFFLINE_FORM_HTML.encode("utf-8"))
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Content-Disposition"] = "attachment; filename=offline_form.html"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ================================ API (ZIP) =================================
@@ -551,7 +680,6 @@ def api_build_csv():
     rows = []
     n = max(len(ids), len(names), len(emails))
     for i in range(n):
-        # Robust gegen fehlende Felder
         r = [
             (ids[i] if i < len(ids) else "").strip(),
             (names[i] if i < len(names) else "").strip(),
@@ -561,11 +689,9 @@ def api_build_csv():
             (datings[i] if i < len(datings) else "").strip(),
             (friends[i] if i < len(friends) else "").strip(),
         ]
-        # leere Zeilen überspringen
         if any(r):
             rows.append(r)
 
-    # CSV bauen
     buf = StringIO()
     w = csv.writer(buf)
     w.writerow(["ID","Name","Email","Phone","All","InterestedDating","InterestedFriendship"])
@@ -600,5 +726,4 @@ def example_csv():
 
 # ============================== Main (Debug run) ============================
 if __name__ == "__main__":
-    # Produktion läuft über Gunicorn in systemd
     app.run(host="0.0.0.0", port=5000, debug=False)
