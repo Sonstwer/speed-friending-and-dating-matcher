@@ -1,6 +1,3 @@
-cd /opt/speed-friending-and-dating-matcher/speed_friending_matcher/server
-cp server.py server.py.bak.$(date +%s) 2>/dev/null || true
-cat > server.py <<'PY'
 import os
 import io
 import csv
@@ -12,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import (
-    Flask, request, jsonify, render_template_string, make_response, send_file
+    Flask, request, jsonify, render_template_string, make_response
 )
 
 # =========================== Defaults / Konstanten ===========================
@@ -52,7 +49,6 @@ def _load_people_from_csv(path: str, interested_cols: Tuple[str, ...]) -> dict:
 
     people = {}
     for r in rows:
-        # Falls ID mal leer ist, überspringen
         if not str(r.get("ID", "")).strip().isdigit():
             continue
         pid = int(r["ID"])
@@ -66,20 +62,18 @@ def _load_people_from_csv(path: str, interested_cols: Tuple[str, ...]) -> dict:
         entry["interested_by_col"] = {}
         for col in interested_cols:
             entry["interested_by_col"][col] = _parse_id_list(r.get(col, ""))
-        # Fallback für alte CSVs
         if "Interested" in r and "Interested" not in interested_cols:
             entry["interested_by_col"]["Interested"] = _parse_id_list(r.get("Interested", ""))
         people[pid] = entry
     return people
 
-def _compute_mutual_matches(people: dict, column: str) -> List[Tuple[int, int]]:
+def _compute_mutual_matches(people: dict, column: str):
     likes = {pid: people[pid]["interested_by_col"].get(column, set()) for pid in people}
-    matches: List[Tuple[int, int]] = []
+    matches = []
     for a, targets in likes.items():
         for b in targets:
             if b in likes and a in likes[b] and a < b:
                 pa, pb = people[a], people[b]
-                # optionaler All-Filter
                 if pa.get("all") and b not in pa["all"]:
                     continue
                 if pb.get("all") and a not in pb["all"]:
@@ -87,33 +81,27 @@ def _compute_mutual_matches(people: dict, column: str) -> List[Tuple[int, int]]:
                 matches.append((a, b))
     return matches
 
-def _build_matches(people: dict, cols: List[str]) -> Dict[str, List[Tuple[int, int]]]:
-    out: Dict[str, List[Tuple[int, int]]] = {}
+def _build_matches(people: dict, cols: List[str]):
+    out = {}
     for col in cols:
         out[col] = _compute_mutual_matches(people, column=col)
     return out
 
-def _zip_from_matches(
-    people: dict,
-    matches_by_label: Dict[str, List[Tuple[int, int]]],
-    name_prefix: str = "matches"
-) -> bytes:
-    """Erzeugt ZIP (mit Telefon-Nummern)."""
+def _zip_from_matches(people: dict, matches_by_label: Dict[str, list], name_prefix: str = "matches") -> bytes:
+    """Erzeugt ZIP (inkl. Telefonnummern)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for label, pairs in matches_by_label.items():
             s = StringIO()
             w = csv.writer(s)
-            w.writerow(["A_ID", "A_Name", "A_Email", "A_Phone",
-                        "B_ID", "B_Name", "B_Email", "B_Phone"])
+            w.writerow(["A_ID", "A_Name", "A_Email", "A_Phone", "B_ID", "B_Name", "B_Email", "B_Phone"])
             for a, b in pairs:
                 pa, pb = people[a], people[b]
-                w.writerow([
-                    a, pa.get("name",""), pa.get("email",""), pa.get("phone",""),
-                    b, pb.get("name",""), pb.get("email",""), pb.get("phone","")
-                ])
+                w.writerow([a, pa.get("name",""), pa.get("email",""), pa.get("phone",""),
+                            b, pb.get("name",""), pb.get("email",""), pb.get("phone","")])
             safe_label = "".join(c for c in label if c.isalnum() or c in ("-", "_")).strip() or "result"
-            zf.writestr(f"{name_prefix}_{safe_label}.csv", s.getvalue())
+            filename = f"{name_prefix}_{safe_label}.csv"
+            zf.writestr(filename, s.getvalue())
     return buf.getvalue()
 
 def _save_temp_csv_and_get_token(file_storage) -> str:
@@ -128,11 +116,8 @@ def _load_people_from_token(token: str, cols: List[str]) -> dict:
         raise FileNotFoundError("Invalid or expired file token")
     return _load_people_from_csv(str(path), tuple(cols))
 
-def _aggregate_matches_per_person(
-    people: dict,
-    matches_by_label: Dict[str, List[Tuple[int, int]]]
-) -> Dict[int, Dict[str, List[int]]]:
-    per_person: Dict[int, Dict[str, List[int]]] = {pid: {lab: [] for lab in matches_by_label.keys()} for pid in people}
+def _aggregate_matches_per_person(people: dict, matches_by_label: Dict[str, list]):
+    per_person = {pid: {lab: [] for lab in matches_by_label.keys()} for pid in people}
     for label, pairs in matches_by_label.items():
         for a, b in pairs:
             per_person[a][label].append(b)
@@ -155,32 +140,20 @@ def _format_partner_list(people: dict, id_list: List[int]) -> str:
         out.append(" ".join(parts).strip())
     return "; ".join(out)
 
-def _build_mailmerge_csv_and_template(
-    people: dict,
-    matches_by_label: Dict[str, List[Tuple[int, int]]],
-    event_name: str
-):
+def _build_mailmerge_csv_and_template(people: dict, matches_by_label: Dict[str, list], event_name: str):
     per_person = _aggregate_matches_per_person(people, matches_by_label)
     labels = list(matches_by_label.keys())
     has_dating = any(l.lower().startswith("dating") for l in labels)
     has_friend = any(l.lower().startswith("friend") for l in labels)
+    dating_key = next((l for l in labels if l.lower().startswith("dating")), None)
+    friend_key = next((l for l in labels if l.lower().startswith("friend")), None)
 
     # CSV
     s = StringIO()
     w = csv.writer(s)
     header = ["To", "Name", "Event"]
-    dating_key = None
-    friend_key = None
-    for l in labels:
-        ll = l.lower()
-        if ll.startswith("dating"):
-            dating_key = l
-        if ll.startswith("friend"):
-            friend_key = l
-    if has_dating:
-        header.append("DatingMatches")
-    if has_friend:
-        header.append("FriendshipMatches")
+    if has_dating: header.append("DatingMatches")
+    if has_friend: header.append("FriendshipMatches")
     w.writerow(header)
 
     for pid, pdata in people.items():
@@ -591,13 +564,11 @@ _MAIL_MERGE_HELP_HTML = """
       <li>Auf der Startseite CSV hochladen und auswerten.</li>
       <li>„Mail-Merge Export (Thunderbird)“ anklicken ⇒ ZIP speichern & entpacken.</li>
       <li>Thunderbird: neue E-Mail erstellen (noch nicht senden).</li>
-      <li>Betreff/Text aus <code>email_template.txt</code> kopieren. Platzhalter sehen z.B. so aus: <code>{{Name}}</code>, <code>{{Event}}</code>, <code>{{DatingMatches}}</code>, <code>{{FriendshipMatches}}</code>, <code>{{To}}</code>.</li>
+      <li>Betreff/Text aus <code>email_template.txt</code> kopieren. Platzhalter: <code>{{Name}}</code>, <code>{{Event}}</code>, <code>{{DatingMatches}}</code>, <code>{{FriendshipMatches}}</code>, <code>{{To}}</code>.</li>
       <li>Im Verfassen-Fenster: <em>Menü</em> → <strong>Mail Merge…</strong></li>
-      <li>CSV-Datei <code>mailmerge.csv</code> auswählen. Spalte <code>To</code> wird als Empfänger verwendet (oder du kopierst die Zeile „Empfänger (To): {{To}}“ händisch).</li>
-      <li>Test mit „<em>Send Later</em>“ oder „<em>Preview</em>“ machen, dann senden.</li>
+      <li>CSV-Datei <code>mailmerge.csv</code> wählen. Spalte <code>To</code> = Empfänger (oder „Empfänger (To): {{To}}“ händisch kopieren).</li>
+      <li>Test mit „Send Later“/„Preview“, dann senden.</li>
     </ol>
-
-    <p>Hinweis: Das Template nutzt die Spaltennamen der CSV in doppelten geschweiften Klammern. Du kannst Text frei anpassen.</p>
 
     <p><a class="btn" href="/" title="Zurück">← Zurück</a></p>
   </div>
@@ -674,7 +645,7 @@ def export_mail_merge():
         return jsonify({"error": "labels must have same count as interested-columns"}), 400
     event_name = (request.values.get("event") or DEFAULT_EVENT).strip() or DEFAULT_EVENT
 
-    # CSV laden (Upload oder Token)
+    # CSV laden
     people = None
     f = request.files.get("file")
     if f:
@@ -701,14 +672,11 @@ def export_mail_merge():
             except Exception:
                 pass
 
-    # Matches berechnen
     matches_raw = _build_matches(people, cols)
     matches_by_label = {labels[i]: matches_raw[cols[i]] for i in range(len(cols))}
 
-    # CSV + Template bauen
     csv_text, template_text = _build_mailmerge_csv_and_template(people, matches_by_label, event_name)
 
-    # README
     readme = """Mail-Merge Export – Speed Friending & Dating
 
 Dateien:
@@ -730,7 +698,6 @@ Platzhalter im Template:
 - {{To}} {{Name}} {{Event}} {{DatingMatches}} {{FriendshipMatches}}
 """
 
-    # ZIP zurückgeben
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("mailmerge.csv", csv_text)
@@ -867,8 +834,3 @@ def example_csv():
 if __name__ == "__main__":
     # Produktion läuft über Gunicorn in systemd
     app.run(host="0.0.0.0", port=5000, debug=False)
-PY
-
-# Dienst neu starten & checken
-systemctl restart matcher
-journalctl -u matcher -n 50 --no-pager
