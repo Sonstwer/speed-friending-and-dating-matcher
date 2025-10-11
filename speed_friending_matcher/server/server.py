@@ -140,46 +140,51 @@ def _format_partner_list(people: dict, id_list: List[int]) -> str:
     return "; ".join(out)
 
 def _build_mailmerge_csv_and_template(people: dict, matches_by_label: Dict[str, list], event_name: str):
+    """
+    Erzeugt:
+      - mailmerge.csv mit Spalten: To,Name,Event,MessageBody
+      - email_template.txt das {{MessageBody}} einbindet + Repo-Hinweis
+    Pro Person:
+      - Wenn Dating/Friendship leer => freundliche 'Sorry'-Nachricht
+      - Sonst aufbereitete Listen (beide Bereiche möglich)
+    """
     per_person = _aggregate_matches_per_person(people, matches_by_label)
     labels = list(matches_by_label.keys())
-    has_dating = any(l.lower().startswith("dating") for l in labels)
-    has_friend = any(l.lower().startswith("friend") for l in labels)
     dating_key = next((l for l in labels if l.lower().startswith("dating")), None)
     friend_key = next((l for l in labels if l.lower().startswith("friend")), None)
 
     s = StringIO()
     w = csv.writer(s)
-    header = ["To", "Name", "Event"]
-    if has_dating: header.append("DatingMatches")
-    if has_friend: header.append("FriendshipMatches")
-    w.writerow(header)
+    w.writerow(["To", "Name", "Event", "MessageBody"])
 
     for pid, pdata in people.items():
-        row = [pdata.get("email",""), pdata.get("name",""), event_name]
-        if has_dating:
-            d_ids = per_person[pid].get(dating_key or "", [])
-            row.append(_format_partner_list(people, d_ids))
-        if has_friend:
-            f_ids = per_person[pid].get(friend_key or "", [])
-            row.append(_format_partner_list(people, f_ids))
-        w.writerow(row)
+        d_ids = per_person[pid].get(dating_key or "", []) if dating_key else []
+        f_ids = per_person[pid].get(friend_key or "", []) if friend_key else []
+
+        parts = [f"Hallo {pdata.get('name','')},", "", f"hier sind deine Ergebnisse für {event_name}:"]
+        if d_ids or f_ids:
+            if d_ids:
+                parts += ["", "💘 Dating-Matches:", _format_partner_list(people, d_ids)]
+            if f_ids:
+                parts += ["", "🤝 Freundschafts-Matches:", _format_partner_list(people, f_ids)]
+            parts += ["", "Viel Spaß beim Vernetzen!"]
+        else:
+            parts += ["", "Tut uns leid – diesmal sind leider keine gegenseitigen Matches entstanden.",
+                      "Danke fürs Mitmachen – vielleicht klappt’s beim nächsten Mal! 🫶"]
+
+        message_body = "\n".join(parts)
+        w.writerow([pdata.get("email",""), pdata.get("name",""), event_name, message_body])
 
     csv_text = s.getvalue()
 
-    lines = [
-        "Empfänger (To): {{To}}",
-        "Betreff: Deine Matches für {{Event}}",
-        "",
-        "Hallo {{Name}},",
-        "",
-        "hier sind deine Matches für {{Event}}:",
-    ]
-    if has_dating:
-        lines += ["", "💘 Dating-Matches:", "{{DatingMatches}}"]
-    if has_friend:
-        lines += ["", "🤝 Freundschafts-Matches:", "{{FriendshipMatches}}"]
-    lines += ["", "Viel Spaß beim Vernetzen!", "", "--", "Diese Nachricht wurde mit dem Speed Friending & Dating Matcher erstellt."]
-    template_text = "\n".join(lines)
+    template_text = (
+        "Empfänger (To): {{To}}\n"
+        "Betreff: Deine Ergebnisse für {{Event}}\n\n"
+        "{{MessageBody}}\n\n"
+        "-- \n"
+        "Erstellt mit dem Speed Friending & Dating Matcher\n"
+        "Fork: https://github.com/Sonstwer/speed-friending-and-dating-matcher\n"
+    )
     return csv_text, template_text
 
 # ========================= Gemeinsames CSS + Themes ==========================
@@ -255,7 +260,7 @@ th { background: #f7f7f7; text-align: left; }
 .btn.secondary { background: var(--btn2-bg); color: #fff; }
 .row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
 input[type="text"], input[type="file"], input[type="email"], input[type="number"] {
-  padding: .4rem .6rem; border-radius: 8px; border: 1px solid #ccc; min-width: 260px; background: #fff; color: #000;
+  padding: .4rem .6rem; border-radius: 8px; border: 1px solid #ccc; min-width: 240px; background: #fff; color: #000;
 }
 .switch { display:flex; align-items:center; gap:.5rem; }
 """
@@ -328,6 +333,13 @@ _INDEX_HTML = """
         </div>
         """ + _THEME_TOGGLE_HTML + """
       </div>
+
+      <p class="note" style="margin:.4rem 0 1rem 0;">
+        Diese App nimmt eine Teilnehmer-CSV (<code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>)
+        und bildet daraus **gegenseitige** Matches – getrennt nach Dating und Freundschaft.
+        <br/>„All“ (optional) schränkt die möglichen Matches auf bestimmte IDs ein.
+        Ergebnis: Anzeige im Browser, ZIP-Export (CSV-Dateien), sowie **Mail-Merge**-Export für personalisierte Mails.
+      </p>
 
       <form action="/ui/match" method="post" enctype="multipart/form-data" style="margin-top:.5rem">
         <div class="row" style="margin:.5rem 0">
@@ -417,7 +429,10 @@ _CSV_BUILDER_HTML = """
   <meta charset="utf-8" />
   <title>CSV-Builder – Speed Friending & Dating</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>""" + _BASE_STYLE + """</style>
+  <style>""" + _BASE_STYLE + """
+  .wrap { overflow:auto; }
+  .narrow { width:50px; }
+  </style>
   """ + _DARKMODE_SCRIPT + """
 </head>
 <body>
@@ -433,13 +448,21 @@ _CSV_BUILDER_HTML = """
     </div>
 
     <h1 style="margin:0;">CSV-Builder</h1>
-    <p class="note">Erfasse Teilnehmerdaten und erzeuge eine CSV mit den Spalten: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.</p>
+    <p class="note">Erfasse oder importiere eine CSV mit: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.
+    Du kannst Dateien <strong>hochladen & direkt hier editieren</strong>.</p>
 
-    <form id="csvForm" action="/api/build-csv" method="post">
-      <table id="tbl">
+    <div class="row" style="margin:.4rem 0 1rem 0;">
+      <label>CSV importieren:
+        <input type="file" id="csvUpload" accept=".csv,text/csv" />
+      </label>
+      <button class="btn secondary" type="button" id="clearRows">Tabelle leeren</button>
+    </div>
+
+    <form id="csvForm" action="/api/build-csv" method="post" class="wrap">
+      <table id="tbl" style="min-width:980px;">
         <thead>
           <tr>
-            <th style="width:70px;">ID</th>
+            <th class="narrow">ID</th>
             <th>Name</th>
             <th>Email</th>
             <th>Phone</th>
@@ -477,6 +500,8 @@ _CSV_BUILDER_HTML = """
     const tbody = document.querySelector('#tbl tbody');
     const addRowBtn = document.getElementById('addRow');
     const evalNowBtn = document.getElementById('evalNow');
+    const uploadInput = document.getElementById('csvUpload');
+    const clearBtn = document.getElementById('clearRows');
 
     function esc(v){
       return String(v == null ? '' : v)
@@ -486,7 +511,7 @@ _CSV_BUILDER_HTML = """
     function newRow(data){
       data = data || {};
       const html =
-        '<td><input name="id[]" type="number" min="1" value="' + esc(data.id||'') + '" required></td>' +
+        '<td class="narrow"><input name="id[]" type="number" min="1" value="' + esc(data.id||'') + '" required style="width:100%;"></td>' +
         '<td><input name="name[]" type="text" value="' + esc(data.name||'') + '" required></td>' +
         '<td><input name="email[]" type="email" value="' + esc(data.email||'') + '" required></td>' +
         '<td><input name="phone[]" type="text" value="' + esc(data.phone||'') + '"></td>' +
@@ -525,15 +550,75 @@ _CSV_BUILDER_HTML = """
       return lines.join("\\n");
     }
 
+    // simpler CSV-Parser für Import (unterstützt Quotes)
+    function parseCSV(text){
+      const rows = [];
+      let i=0, field='', row=[], inQ=false;
+      while(i < text.length){
+        const c = text[i];
+        if(inQ){
+          if(c === '"'){
+            if(text[i+1] === '"'){ field += '"'; i+=2; continue; }
+            inQ = false; i++; continue;
+          } else { field += c; i++; continue; }
+        } else {
+          if(c === '"'){ inQ = true; i++; continue; }
+          if(c === ','){ row.push(field); field=''; i++; continue; }
+          if(c === '\n'){ row.push(field); rows.push(row); row=[]; field=''; i++; continue; }
+          if(c === '\r'){ i++; continue; }
+          field += c; i++;
+        }
+      }
+      // letztes Feld
+      row.push(field);
+      if(row.some(x => x !== '' || rows.length === 0)) rows.push(row);
+      return rows;
+    }
+
+    function fromHeaderMap(cols, row){
+      function get(col){ const idx = cols.indexOf(col); return idx>=0 ? (row[idx]||'') : ''; }
+      return {
+        id: get('ID'),
+        name: get('Name'),
+        email: get('Email'),
+        phone: get('Phone'),
+        all: get('All'),
+        dating: get('InterestedDating'),
+        friend: get('InterestedFriendship'),
+      };
+    }
+
     addRowBtn.addEventListener('click', () => newRow());
+    clearBtn.addEventListener('click', () => { tbody.innerHTML=''; });
+
     // zwei Beispielzeilen
     newRow({id:1, name:"Alex (they/them)", email:"alex@example.com", phone:"+4311111", all:"2;3", dating:"2", friend:"3"});
     newRow({id:2, name:"Quinn",             email:"quinn@example.com", phone:"+4322222", all:"1;3", dating:"1", friend:""});
 
+    uploadInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if(!file) return;
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if(!rows.length){ alert('Leere CSV.'); return; }
+      // Header suchen
+      const header = rows[0].map(h => h.trim());
+      const need = ["ID","Name","Email","Phone","All","InterestedDating","InterestedFriendship"];
+      for (const n of need){
+        if(!header.includes(n)){ alert("CSV-Header fehlt Spalte: " + n); return; }
+      }
+      tbody.innerHTML = '';
+      for (let i=1; i<rows.length; i++){
+        const data = fromHeaderMap(header, rows[i]);
+        if(Object.values(data).every(v => String(v).trim()==='')) continue;
+        newRow(data);
+      }
+    });
+
     evalNowBtn.addEventListener('click', async (e) => {
       e.preventDefault();
       const csv = tableToCSV();
-      if(!csv.trim()){ alert("Bitte mindestens eine Zeile erfassen."); return; }
+      if(!csv.trim()){ alert("Bitte mindestens eine Zeile erfassen oder importieren."); return; }
       const file = new File([csv], "participants.csv", {type:"text/csv"});
       const fd = new FormData();
       fd.append("file", file);
@@ -635,7 +720,6 @@ _OFFLINE_FORM_HTML = """
         </tr>
       </thead>
       <tbody>
-        <!-- 12 Zeilen -->
         """ + ("\n".join(['<tr><td>&nbsp;</td><td style="height:38px;">&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>']*12)) + """
       </tbody>
     </table>
@@ -683,10 +767,9 @@ _MAIL_MERGE_HELP_HTML = """
       <li>Auf der Startseite CSV hochladen oder im CSV-Builder erfassen und auswerten.</li>
       <li>„Mail-Merge Export (Thunderbird)“ anklicken ⇒ ZIP speichern & entpacken.</li>
       <li>Thunderbird: neue E-Mail erstellen (noch nicht senden).</li>
-      <li>Betreff/Text aus <code>email_template.txt</code> kopieren. Platzhalter: <code>{{Name}}</code>, <code>{{Event}}</code>, <code>{{DatingMatches}}</code>, <code>{{FriendshipMatches}}</code>, <code>{{To}}</code>.</li>
+      <li>Betreff/Text aus <code>email_template.txt</code> kopieren. Wichtige Platzhalter: <code>{{To}}</code>, <code>{{Name}}</code>, <code>{{Event}}</code>, <code>{{MessageBody}}</code>.</li>
       <li>Im Verfassen-Fenster: <em>Menü</em> → <strong>Mail Merge…</strong></li>
-      <li>CSV-Datei <code>mailmerge.csv</code> wählen. Spalte <code>To</code> = Empfänger (oder „Empfänger (To): {{To}}“ händisch kopieren).</li>
-      <li>Test mit „Send Later“/„Preview“, dann senden.</li>
+      <li>CSV-Datei <code>mailmerge.csv</code> wählen. Spalte <code>To</code> = Empfänger-Adresse (oder die Zeile „Empfänger (To): {{To}}“ zum Prüfen nutzen).</li>
     </ol>
 
     <p><a class="btn" href="/" title="Zurück">← Zurück</a></p>
@@ -968,7 +1051,6 @@ def export_mail_merge():
 
     # Matches bilden
     matches_raw = _build_matches(people, cols)
-    # Labels den Spalten zuordnen (Reihenfolge beachten)
     matches_by_label = {labels[i]: matches_raw[cols[i]] for i in range(len(cols))}
 
     mm_csv, mm_template = _build_mailmerge_csv_and_template(people, matches_by_label, event_name)
