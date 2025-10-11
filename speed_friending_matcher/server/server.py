@@ -2,10 +2,12 @@
 speed_friending_matcher.server.server
 ------------------------------------
 Flask-Webserver für Speed-Friending/Dating mit:
-- /        : HTML-UI (Upload) -> zeigt Match-Tabellen & Download-Button
-- /ui/match: POST-Handler für das UI
-- /api/match/dual: liefert ZIP (per Upload oder file_token)
-- /example/dual_interest_sample.csv: kleine Beispiel-CSV zum Testen
+- /                 : HTML-UI (Upload) -> zeigt Match-Tabellen & Download-Button
+- /ui/match         : POST-Handler für das UI
+- /api/match/dual   : ZIP-Download (per Upload oder file_token)
+- /ui/build-csv     : CSV-Builder-UI (Zeilen erfassen)
+- /api/build-csv    : erzeugt CSV aus Formulardaten
+- /example/dual_interest_sample.csv : Beispiel-CSV
 Robust: Fallback-Importer/-Matcher, falls Projektmodule fehlen.
 """
 
@@ -20,7 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import (
-    Flask, request, jsonify, render_template_string, make_response, send_file
+    Flask, request, jsonify, render_template_string, make_response
 )
 
 # ========================== Projekt-Imports (robust) =========================
@@ -123,7 +125,7 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Upload-Limit
 # Startseite nie cachen (CSS-Änderungen sofort sichtbar)
 @app.after_request
 def add_no_cache(resp):
-    if request.path == "/":
+    if request.path in ("/", "/ui/build-csv"):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
     return resp
@@ -147,7 +149,7 @@ def _zip_from_matches(
     matches_by_label: Dict[str, List[Tuple[int, int]]],
     name_prefix: str = "matches"
 ) -> bytes:
-    """Erzeugt ZIP (jetzt mit Telefon-Nummern)."""
+    """Erzeugt ZIP (mit Telefon-Nummern)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for label, pairs in matches_by_label.items():
@@ -182,7 +184,7 @@ def _load_people_from_token(token: str, cols: List[str]) -> dict:
     return people
 
 
-# ================================ HTML UI ===================================
+# ================================ HTML: Index ================================
 _INDEX_HTML = """
 <!doctype html>
 <html lang="de">
@@ -221,6 +223,8 @@ _INDEX_HTML = """
     .titlebar { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; }
     .links a { text-decoration:none; margin-right:.6rem; font-weight:600; }
     .links a span { margin-right:.25rem; }
+    .note { font-size:.9em; color:#222; margin-top:.4rem }
+    .note a { color:#000; text-decoration:underline; }
     table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
     th, td { border: 1px solid #e9e9e9; padding: .45rem .6rem; }
     th { background: #f7f7f7; text-align: left; }
@@ -231,7 +235,7 @@ _INDEX_HTML = """
     input[type="text"], input[type="file"] { padding: .4rem .6rem; border-radius: 8px; border: 1px solid #ccc; min-width: 320px; background: #fff; }
     .muted { color: #333; font-size: .9em; }
     .pill { display:inline-block; padding: .2rem .5rem; border:1px solid #ddd; border-radius:999px; margin-left:.5rem; font-size:.85em; background:#fafafa;}
-    .header { color:#fff; text-shadow: 0 2px 8px rgba(0,0,0,.35); }
+    .header { color:#000; text-shadow: none; } /* Schwarz für Kontrast */
   </style>
 </head>
 <body>
@@ -241,11 +245,15 @@ _INDEX_HTML = """
         <h1 class="header">Speed Friending & Dating Matcher</h1>
         <div class="links">
           <a href="/" title="Home"><span>🌈</span>Home</a>
+          <a href="/ui/build-csv" title="CSV-Builder"><span>🌈</span>CSV-Builder</a>
           <a href="/api/match/dual" title="API (ZIP per GET mit file_token)"><span>🌈</span>API</a>
-          <a href="https://github.com/Sonstwer/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>GitHub</a>
+          <a href="https://github.com/Sonstwer/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>GitHub (Fork)</a>
+          <a href="https://github.com/machinekoder/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>Original</a>
           <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV herunterladen"><span>🌈</span>Sample CSV</a>
         </div>
       </div>
+      <p class="note">Hinweis: Dieses Projekt basiert auf dem <a href="https://github.com/machinekoder/speed-friending-and-dating-matcher" target="_blank" rel="noopener">ursprünglichen Repository von machinekoder</a>. Diese Instanz enthält erweiterte UI-Funktionen.</p>
+
       <form action="{{ url_for('ui_match') }}" method="post" enctype="multipart/form-data" style="margin-top:.5rem">
         <div class="row" style="margin:.5rem 0">
           <label>CSV-Datei:
@@ -319,6 +327,106 @@ _INDEX_HTML = """
 </html>
 """
 
+# ================================ HTML: CSV Builder ==========================
+_CSV_BUILDER_HTML = """
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>CSV-Builder – Speed Friending & Dating</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --card-bg: rgba(255,255,255,0.92); --card-border: rgba(255,255,255,0.7); }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 2rem; min-height: 100vh;
+      background: linear-gradient(135deg,#ff595e 0%,#ffca3a 20%,#8ac926 40%,#1982c4 60%,#6a4c93 80%,#ff595e 100%); background-attachment: fixed;
+    }
+    .card { border:1px solid var(--card-border); border-radius:12px; padding:1rem 1.2rem; margin-bottom:1rem; background:var(--card-bg); box-shadow:0 10px 30px rgba(0,0,0,.12); backdrop-filter: blur(6px); }
+    h1 { margin:0; color:#000; }
+    .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+    table { border-collapse: collapse; width: 100%; margin-top:.75rem;}
+    th, td { border:1px solid #e9e9e9; padding:.45rem .6rem; }
+    th { background:#f7f7f7; }
+    input { width:100%; box-sizing:border-box; padding:.35rem .5rem; }
+    .btn { display:inline-block; padding:.55rem 1rem; border-radius:8px; background:#111; color:#fff; border:none; cursor:pointer; text-decoration:none; }
+    .btn.secondary { background:#444; }
+    .muted { color:#333; font-size:.9em; }
+    .links a { text-decoration:none; margin-right:.6rem; font-weight:600; }
+    .links a span { margin-right:.25rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <h1>CSV-Builder</h1>
+      <div class="links">
+        <a href="/" title="Home"><span>🌈</span>Home</a>
+        <a href="/example/dual_interest_sample.csv" title="Beispiel-CSV"><span>🌈</span>Sample CSV</a>
+        <a href="https://github.com/machinekoder/speed-friending-and-dating-matcher" target="_blank" rel="noopener"><span>🌈</span>Original</a>
+      </div>
+    </div>
+
+    <p class="muted">Erfasse Teilnehmerdaten und erzeuge eine CSV mit den Spalten: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.</p>
+
+    <form id="csvForm" action="/api/build-csv" method="post">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th style="width:70px;">ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th style="width:140px;">All (z.B. 2;3)</th>
+            <th style="width:180px;">InterestedDating</th>
+            <th style="width:200px;">InterestedFriendship</th>
+            <th style="width:60px;">✖</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="row" style="margin-top:.75rem;">
+        <button class="btn secondary" type="button" id="addRow">+ Zeile</button>
+        <span class="muted">Tipp: IDs fortlaufend vergeben. Interessenslisten mit Semikolon trennen.</span>
+      </div>
+
+      <div class="row" style="margin-top:1rem;">
+        <button class="btn" type="submit">CSV erzeugen & downloaden</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    const tbody = document.querySelector('#tbl tbody');
+    const addRowBtn = document.getElementById('addRow');
+
+    function newRow(data={}) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input name="id[]" type="number" min="1" value="${data.id||''}" required></td>
+        <td><input name="name[]" type="text" value="${data.name||''}" required></td>
+        <td><input name="email[]" type="email" value="${data.email||''}" required></td>
+        <td><input name="phone[]" type="text" value="${data.phone||''}"></td>
+        <td><input name="all[]" type="text" placeholder="2;3" value="${data.all||''}"></td>
+        <td><input name="dating[]" type="text" placeholder="2;3" value="${data.dating||''}"></td>
+        <td><input name="friend[]" type="text" placeholder="2;3" value="${data.friend||''}"></td>
+        <td style="text-align:center;"><button class="btn secondary" type="button" onclick="this.closest('tr').remove()">–</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    addRowBtn.addEventListener('click', () => newRow());
+
+    // Zwei Demozeilen vorbefüllen
+    newRow({id:1, name:"Alice", email:"alice@example.com", phone:"+4311111", all:"2;3", dating:"2", friend:"3"});
+    newRow({id:2, name:"Bob",   email:"bob@example.com",   phone:"+4322222", all:"1;3", dating:"1", friend:""});
+  </script>
+</body>
+</html>
+"""
+
+# ================================== Routes ==================================
 @app.route("/", methods=["GET"])
 def index():
     return render_template_string(_INDEX_HTML, results=None)
@@ -361,6 +469,11 @@ def ui_match():
         labels=labels,
         event_name=event_name,
     )
+
+
+@app.route("/ui/build-csv", methods=["GET"])
+def ui_build_csv():
+    return render_template_string(_CSV_BUILDER_HTML)
 
 
 # ================================ API (ZIP) =================================
@@ -419,6 +532,50 @@ def api_match_dual():
     resp.headers["Content-Type"] = "application/zip"
     resp.headers["Content-Disposition"] = "attachment; filename=matches.zip"
     resp.headers["Content-Length"] = str(len(data))
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+# =============================== API: Build CSV ==============================
+@app.route("/api/build-csv", methods=["POST"])
+def api_build_csv():
+    """Erzeugt eine CSV aus den Formulardaten des CSV-Builders."""
+    ids = request.form.getlist("id[]")
+    names = request.form.getlist("name[]")
+    emails = request.form.getlist("email[]")
+    phones = request.form.getlist("phone[]")
+    alls = request.form.getlist("all[]")
+    datings = request.form.getlist("dating[]")
+    friends = request.form.getlist("friend[]")
+
+    rows = []
+    n = max(len(ids), len(names), len(emails))
+    for i in range(n):
+        # Robust gegen fehlende Felder
+        r = [
+            (ids[i] if i < len(ids) else "").strip(),
+            (names[i] if i < len(names) else "").strip(),
+            (emails[i] if i < len(emails) else "").strip(),
+            (phones[i] if i < len(phones) else "").strip(),
+            (alls[i] if i < len(alls) else "").strip(),
+            (datings[i] if i < len(datings) else "").strip(),
+            (friends[i] if i < len(friends) else "").strip(),
+        ]
+        # leere Zeilen überspringen
+        if any(r):
+            rows.append(r)
+
+    # CSV bauen
+    buf = StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ID","Name","Email","Phone","All","InterestedDating","InterestedFriendship"])
+    for r in rows:
+        w.writerow(r)
+
+    data = buf.getvalue().encode("utf-8")
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = "attachment; filename=participants.csv"
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
