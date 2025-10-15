@@ -344,7 +344,7 @@ _INDEX_HTML = """
       </div>
 
       <p class="note" style="margin:.4rem 0 1rem 0;">
-        <strong>Was macht die App?</strong> Du lädst eine Teilnehmer-CSV hoch und bekommst
+        <strong>Was macht die App?</strong> Du lädst eine Teilnehmenden-CSV hoch und bekommst
         <em>gegenseitige</em> Matches für <strong>Dating</strong> und <strong>Friendship</strong> – getrennt
         nach Kanälen. Optional kannst du mit <code>All</code> erlaubte Match-IDs einschränken.
         Ergebnisse siehst du direkt im Browser, kannst sie als ZIP exportieren oder für Thunderbird als
@@ -458,7 +458,7 @@ _CSV_BUILDER_HTML = """
     </div>
 
     <h1 style="margin:0;">CSV-Builder</h1>
-    <p class="note">Erfasse Teilnehmerdaten und erzeuge eine CSV mit den Spalten: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.</p>
+    <p class="note">Erfasse Teilnehmendendaten und erzeuge eine CSV mit den Spalten: <code>ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship</code>.</p>
 
     <form id="csvForm" action="/api/build-csv" method="post" class="wrap">
       <table id="tbl" style="min-width:980px;">
