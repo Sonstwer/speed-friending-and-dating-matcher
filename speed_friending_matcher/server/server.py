@@ -346,7 +346,7 @@ _INDEX_HTML = """
       <p class="note" style="margin:.4rem 0 1rem 0;">
         <strong>Was macht die App?</strong> Du lädst eine Teilnehmenden-CSV hoch und bekommst
         <em>gegenseitige</em> Matches für <strong>Dating</strong> und <strong>Friendship</strong> – getrennt
-        nach Kanälen. Optional kannst du mit <code>All</code> erlaubte Match-IDs einschränken.
+        nach Kanälen. Optional kannst du mit <code>All</code> erlaubte Match-IDs einschränken, nur wenn beide ID-s die andere Person in <code>All</code> eingetragen haben wird diese Person gematched.
         Ergebnisse siehst du direkt im Browser, kannst sie als ZIP exportieren oder für Thunderbird als
         Mail-Merge-Paket herunterladen.
       </p>
