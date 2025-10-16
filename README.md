@@ -1,227 +1,170 @@
 # Matching Software for Speed Friending and Dating Events
-[![Build Status](https://travis-ci.org/DiffSK/configobj.svg?branch=master)](https://travis-ci.org/machinekoder/speed-friending-and-dating-matcher)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/machinekoder/speed-friending-matcher/blob/master/LICENSE)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/ambv/black)
 
-This application is designed to make your life as organizer of speed friending or speed dating events easier. I created this software for a [local speed friending event in Vienna, Austria](https://www.meetup.com/de-DE/speed-friending-events/) to give back value to the event organizers. For me, the project additionally serves as a playground for software engineering best practices. The application was implemented in an agile, test-driven development process applying all development best practices so far known to me.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-## Installing the application
-To install the live coding environment run:
+This application helps organizers of speed-friending and speed-dating events manage participant matching quickly and transparently.  
+Originally developed for a community event in Vienna, it now provides a flexible and open-source basis for similar projects.
+
+---
+
+## Features
+- Import participant data (CSV)
+- Generate compatible pairings or group “cliques”
+- Export results to text or Excel
+- Optional web interface via Flask
+- Clean modular design (importer/exporter/matchmaker)
+
+---
+
+## Installation (Development)
 
 ```bash
-python setup.py install
+git clone https://github.com/Sonstwer/speed-friending-and-dating-matcher.git
+cd speed-friending-and-dating-matcher
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-or install it via pip
+Run the CLI:
 
 ```bash
-pip install speed-friending-matcher
+python -m speed_friending_matcher -i csv:example/sample.csv -o todo:result.txt
 ```
 
-## How to use it
-Run the speed-friending-matcher from the command line:
+Run the built-in development server:
+
+```bash
+python -m speed_friending_matcher -s
+```
+
+---
+
+## Command Line Options
+
 ```
 usage: speed_friending_matcher [-h] -i INPUT -o OUTPUT [-m MATCHMAKER] [-s]
 
-Matchmaking application for speed friending events
+Matchmaking application for speed-friending events
 
 optional arguments:
   -h, --help            show this help message and exit
   -i INPUT, --input INPUT
-                        Input plugin and parameters e.g. csv:somefile.csv
+                        Input plugin, e.g. csv:participants.csv
   -o OUTPUT, --output OUTPUT
-                        Output plugins and parameters e.g. todo:mytodo.txt
+                        Output plugin, e.g. todo:results.txt
   -m MATCHMAKER, --matchmaker MATCHMAKER
-                        Matchmaker, simple or clique
-  -s, --server          Starts a local webserver with a web GUI.
+                        Matchmaker: simple | clique
+  -s, --server          Start local webserver with web GUI
 ```
 
-For example:
+Example:
 ```bash
-speed_friending_matcher -i csv:example/sample.csv -o todo:test.txt
+speed_friending_matcher -i csv:example/sample.csv -o todo:output.txt
 ```
+
+---
 
 ## Importer Plugins
-
-* **csv:<filename>.csv:** imports a CSV file with partipants data
+| Name | Description |
+|------|--------------|
+| `csv:<file>.csv` | Import participant data from a CSV file |
 
 ## Exporter Plugins
-
-`[]` means optional
-
-* todo - exports a TODO file
-```
-todo:<filename>.txt:[<template_filename>.txt]
-```
-
-* onexlsx - exports a single Excel sheet containing matching information
-```
-onexlsx:<filename>.xlsx
-```
-
-* clique - exports a file containing all found cliques, to be used with the clique matchmaker
-```
-clique:<filename>.txt:[<header_filename>.txt]:[<template_filename.txt]
-```
-
-* graph - exports a graphical representation of the match graph, supports any export formats supported by [GraphViz](https://www.graphviz.org/)
-```
-graph:<filename>.<png, dot, ...>
-```
+| Name | Example | Description |
+|------|----------|-------------|
+| `todo` | `todo:output.txt[:template.txt]` | Simple TODO-list output |
+| `onexlsx` | `onexlsx:output.xlsx` | Single-sheet Excel export |
+| `clique` | `clique:output.txt[:header.txt][:template.txt]` | Export clique results |
+| `graph` | `graph:output.png` | GraphViz visualization export |
 
 ## Matchmakers
+- **simple:** one-to-one mutual match
+- **clique:** find groups (“cliques”) of mutual interest
 
-* **simple:** Simple I liked you, you liked me matchmaking
-* **clique:** Finds cliques of people liking each other
+---
 
-## Run on your Server
+## Production Deployment (Gunicorn + systemd)
 
-The application can be started in server mode with the optional command line argument `-s`.
-However, please be aware that this starts a development server which is not recommended
-to be used for production.
+### Requirements
+- Linux host  
+- Python 3.11+  
+- Reverse proxy (e.g. Caddy or Nginx)
 
-If you want to run the application on your webserver please refer to 
-the [WSGI Guide for Flask.](http://flask.pocoo.org/docs/1.0/deploying/mod_wsgi/) or 
-use [gunicorn](https://gunicorn.org/).
-
-For example:
+### Installation
 ```bash
-pip3 install gunicorn --user
-gunicorn -w 4 wsgi:application
+# Create and prepare directory
+sudo mkdir -p /opt/matcher/app
+sudo chown -R matcher:matcher /opt/matcher
+cd /opt/matcher/app
+
+# Deploy code (via Git or ZIP)
+python3 -m venv .venv
+/opt/matcher/app/.venv/bin/pip install --upgrade pip setuptools wheel
+/opt/matcher/app/.venv/bin/pip install -r requirements.txt
 ```
 
-Use your Apache or other webservers `.htaccess` to forward the port.
+### WSGI entrypoint
+`wsgi.py` must contain exactly:
+```python
+from speed_friending_matcher.server.server import app as application
+```
 
-### Detailed instructions
+### systemd Unit
+`/etc/systemd/system/matcher.service`
+```ini
+[Unit]
+Description=Matchmaking – Gunicorn WSGI
+After=network.target
 
-The following instructions were tested on a server with root access.
+[Service]
+User=matcher
+Group=matcher
+WorkingDirectory=/opt/matcher/app
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/opt/matcher/app/.venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 wsgi:application
+Restart=always
+RestartSec=2
 
-If you are running these steps in a production environment, make sure you have a back-up in place. I'm not responsible for any damages or losses.
+[Install]
+WantedBy=multi-user.target
+```
 
-If you have a webmaster, let your webmaster do the job.
-
-Ezyatev created an alternative [guide for CentOS 7.6 with Apache server](https://gist.github.com/ezyatev/4f8be8618e610d0413883d33278bc6fa).
-
-#### Ensure Python and pip are installed
-
-1. Open a root terminal on your server
-2. Check if Python is installed
-
+Enable and start:
 ```bash
-which python
+sudo systemctl daemon-reload
+sudo systemctl enable --now matcher.service
+sudo systemctl status --no-pager -l matcher.service
 ```
 
-Should return something along the lines of
+---
 
-```
-/usr/bin/python
-```
+## Reverse Proxy Example (Caddy)
 
-If not please refer to your web hosts manual for installing Python.
+```caddyfile
+match.example.com {
+    reverse_proxy http://10.0.0.41:5000
+    tls /etc/letsencrypt/live/match.example.com/fullchain.pem /etc/letsencrypt/live/match.example.com/privkey.pem
+}
 
-3. Check if pip is installed
-
-```bash
-which pip
-```
-
-Should return 
-
-```
-/usr/bin/pip
+match-test.example.com {
+    reverse_proxy http://10.0.0.42:5000
+    tls /etc/letsencrypt/live/match.example.com/fullchain.pem /etc/letsencrypt/live/match.example.com/privkey.pem
+}
 ```
 
-If not you can install pip with the `get-pip.py` script.
+---
 
-```bash
-wget https://bootstrap.pypa.io/get-pip.py
-python get-pip.py
-rm get-pip.py
-```
+## Development Notes
+- No more `configure` or `start` imports in WSGI.  
+  `app` is the only exported symbol.  
+- Do **not** commit virtual environments.  
+  Add `.venv/` to `.gitignore`.  
+- Use a reverse proxy for TLS and HTTP redirect handling.
 
-4. Install the Python dependencies
+---
 
-```bash
-pip install gunicorn aenum flask
-```
-
-#### Set-up the Script
-
-1. Log in with your user account
-
-Either via the root shell `su - <username>` or via your webhosts login shell.
-
-2. Download the speed-friending matcher
-
-```bash
-cd ~
-mdkir repos
-cd repos
-git clone https://github.com/machinekoder/speed-friending-and-dating-matcher.git
-``
-
-3. Create a start script
-
-```bash
-cd ~
-mkdir scripts
-cd scripts
-nano start-speed-friending-matcher.sh
-```
-
-```
-
-#!/bin/bash
-pgrep -x gunicorn
-if [ $? -ne 0 ]; then
-cd ~/repos/speed-friending-and-dating-matcher
-gunicorn -w 4 wsgi:application -b localhost:5000
-fi
-```
-
-```bash
-chmod +x start-speed-friending-matcher.sh
-```
-
-4. Set up crontab to start the script
-
-```bash
-crontab -e
-```
-
-Insert
-
-```
-* * * * * ~/scripts/start-speed-friending-matcher.sh
-```
-
-Now wait one minute and your server should be up and running.
-
-
-#### Configure Apache
-
-Use the `.htaccess` of your website to create a `RewriteRule` to the running `gunicorn` instance.
-
-In this example we place the speed-friending script on the route `/script/*`, every other route is redirected to `/index.php`.
-
-```.htaccess
-<IfModule mod_rewrite.c>
-RewriteEngine On
-RewriteBase /
-RewriteRule ^script/(.*)$ http://localhost:5000/$1 [P,L]
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^.*$ /index.php [L]
-</IfModule>
-```
-
-#### Stopping everything
-
-First, you need to remove the start script from crontab `crontab -e`.
-
-Then kill all running gunicorn instances `killall gunicorn`.
-
-
-## Extending the software
-You can extend the software by adding new import and export plugins. Take a look the default plugins
- [csvimporter](./importer/csvimporter.py) and [todoexporter](./exporter/todoexporter.py) for more details.
+## License
+MIT License.  
+See [LICENSE](LICENSE) for details.
