@@ -1,11 +1,11 @@
 ID,Name,Email,Phone,All,InterestedDating,InterestedFriendship
-1,Alex (they/them),alex@example.com,4311111,2;3;4;5;6,2;3;4,4
-2,Quinn,quinn@example.com,4322222,1;3;5,1,3;5
-3,Jamie,jamie@example.com,4333333,1;2;4;6,2;4,1;5
-4,Taylor,taylor@example.com,4344444,1;3;7;8,1;3;7,3;6
-5,Jordan,jordan@example.com,4355555,2;6;7,6,2;3
-6,Morgan,morgan@example.com,4366666,3;5;8,5,1;2
-7,Casey,casey@example.com,4377777,4;5;8;9,5;9,6
-8,Rowan,rowan@example.com,4388888,6;7;9,,7;9
-9,Skylar,skylar@example.com,4399999,7;8;10,10,8
-10,Finley,finley@example.com,43101010,9,9,
+1,Alex (they/them),alex@example.com,4311111,,5;6;7;8;9;10,2;3;4;5
+2,Quinn,quinn@example.com,4322222,,5;6;7;8;9;10,1;3;4;5;10
+3,Jamie,jamie@example.com,4333333,,5;6;7;8;9;10,1;2;4;5
+4,Taylor,taylor@example.com,4344444,,1;2;3;,1;2;3;4;5;6;7;8;9;10
+5,Jordan,jordan@example.com,4355555,,,1;2;3;
+6,Morgan,morgan@example.com,4366666,,1;2;3;,1;2;3;
+7,Casey,casey@example.com,4377777,,5,7
+8,Rowan,rowan@example.com,4388888,,6,
+9,Skylar,skylar@example.com,4399999,,7,7
+10,Finley,finley@example.com,43101010,,1,2
