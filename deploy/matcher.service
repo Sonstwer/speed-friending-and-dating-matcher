@@ -1,0 +1,15 @@
+[Unit]
+Description=Matchmaking – Gunicorn WSGI
+After=network.target
+
+[Service]
+User=matcher
+Group=matcher
+WorkingDirectory=/opt/matcher/app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/matcher/app/.venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 wsgi:application
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

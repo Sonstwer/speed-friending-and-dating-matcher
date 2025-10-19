@@ -1,0 +1,16 @@
+{
+  email admin@example.com
+  log {
+    output file /var/log/caddy/access.log
+  }
+}
+
+example.com {
+  reverse_proxy http://10.0.0.41:5000
+  tls /etc/letsencrypt/live/example.com/fullchain.pem /etc/letsencrypt/live/example.com/privkey.pem
+}
+
+example-test.com {
+  reverse_proxy http://10.0.0.42:5000
+  tls /etc/letsencrypt/live/example.com/fullchain.pem /etc/letsencrypt/live/example.com/privkey.pem
+}
