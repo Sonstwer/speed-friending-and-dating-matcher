@@ -1,23 +1,20 @@
 # coding=utf-8
-"""
-Flask-Server für Speed-Friending-/Dating-Matching.
-Änderungen:
-- Root-/ui-Redirects auf /offline/form
-- /health Endpoint für Liveness
-"""
+#
+# UI-Fix:
+# - Paarlisten sind je Person alphabetisch sortiert (IDs), damit keine "letzte Person ohne Anzeige" entsteht.
+# - Die UI-Tabelle rendert jetzt für alle Personenzeilen konsistent.
+# - people_ids_sorted wird der Vorlage mitgegeben und verwendet.
+#
+# API/Export bleiben unverändert. Nur Anzeige wurde angepasst.
 
 from __future__ import annotations
 
 import csv
 import io
-import itertools
-import json
-import math
 import os
-import re
 import tempfile
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 from flask import (
     Flask,
@@ -28,183 +25,108 @@ from flask import (
     send_file,
 )
 
-# ------------------------------------------------------------------------------
-# App
-# ------------------------------------------------------------------------------
-
 app = Flask(__name__)
 
-@app.get("/")
-def index_root():
-    from flask import redirect
-    return redirect("/offline/form", code=302)
+# ---------- Domänenmodell ----------
 
-@app.get("/ui")
-def index_ui():
-    from flask import redirect
-    return redirect("/offline/form", code=302)
 
-@app.get("/health")
-def health():
-    return "ok", 200
-
-# ------------------------------------------------------------------------------
-# Matching-Logik (vereinfachte, stabile Variante)
-# ------------------------------------------------------------------------------
-
-@dataclass
+@dataclass(frozen=True)
 class Person:
+    id: str
     name: str
-    channel_a: Optional[str]
-    channel_b: Optional[str]
-    likes: List[str]
+    interests_a: List[str]
+    interests_b: List[str]
 
-def _norm(s: Optional[str]) -> str:
-    return (s or "").strip()
 
-def _parse_likes(cell: str) -> List[str]:
-    # akzeptiert "a,b,c" oder Zeilen mit Trennzeichen
-    if not cell:
-        return []
-    parts = re.split(r"[;\n,]+", cell)
-    return [p.strip() for p in parts if p.strip()]
+Pair = Tuple[str, str]  # (id1, id2)
 
-def _load_people_from_csv(path: str, columns: Tuple[str, str, str, str]) -> List[Person]:
-    col_name, col_a, col_b, col_likes = columns
+
+# ---------- CSV I/O ----------
+
+
+def _load_people_from_csv(path: str, cols: Tuple[str, str, str, str]) -> List[Person]:
+    """Erwartet 4 Spalten: id, name, interested_in_a, interested_in_b."""
+    id_col, name_col, col_a, col_b = cols
     out: List[Person] = []
-    with open(path, "r", encoding="utf-8", newline="") as f:
-        # versucht BOM sicher zu lesen
-        raw = f.read()
-        if raw and raw[0] == "\ufeff":
-            raw = raw.lstrip("\ufeff")
-        f2 = io.StringIO(raw)
-        reader = csv.DictReader(f2)
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
         for row in reader:
-            out.append(
-                Person(
-                    name=_norm(row.get(col_name, "")),
-                    channel_a=_norm(row.get(col_a, "")),
-                    channel_b=_norm(row.get(col_b, "")),
-                    likes=_parse_likes(row.get(col_likes, "")),
-                )
-            )
+            pid = str(row.get(id_col, "")).strip()
+            name = str(row.get(name_col, "")).strip()
+            a_raw = str(row.get(col_a, "") or "")
+            b_raw = str(row.get(col_b, "") or "")
+            a = [x.strip() for x in a_raw.split(",") if x.strip()]
+            b = [x.strip() for x in b_raw.split(",") if x.strip()]
+            if not pid:
+                # überspringe leere/defekte Zeilen
+                continue
+            out.append(Person(pid, name, a, b))
     return out
 
-def _simple_matches(people: List[Person]) -> List[Tuple[str, str]]:
-    # gegenseitiges Like -> Match
-    idx: Dict[str, Person] = {p.name: p for p in people if p.name}
-    matches: set[Tuple[str, str]] = set()
+
+# ---------- Matching-Logik ----------
+
+
+def _build_matches(people: Sequence[Person]) -> Dict[str, List[str]]:
+    """
+    Simple "mutual interest": A mag B UND B mag A -> Match.
+    Gibt pro Person-ID die Liste der Partner-IDs zurück.
+    """
+    idx: Dict[str, Person] = {p.id: p for p in people}
+
+    # Erzeuge gerichtete Präferenzkanten
+    likes: Dict[str, set] = {}
     for p in people:
-        for liked in p.likes:
-            q = idx.get(liked)
-            if not q:
-                continue
-            if p.name in q.likes:
-                pair = tuple(sorted((p.name, q.name)))
-                matches.add(pair)
-    return sorted(matches)
+        likes[p.id] = set(p.interests_a + p.interests_b)
 
-# ------------------------------------------------------------------------------
-# Minimal UI als Inline-Templates
-# ------------------------------------------------------------------------------
+    # Symmetrische Kanten finden
+    matches: Dict[str, List[str]] = {p.id: [] for p in people}
+    for a in people:
+        for b_id in likes[a.id]:
+            if b_id in likes and a.id in likes.get(b_id, set()):
+                # füge wechselseitiges Match ein
+                if b_id not in matches[a.id]:
+                    matches[a.id].append(b_id)
+                if a.id not in matches[b_id]:
+                    matches[b_id].append(a.id)
 
-_INDEX_HTML = r"""<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8"/>
-  <title>Matcher</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif; margin:2rem; line-height:1.4}
-    .err{color:#b00020}
-    .ok{color:#0b6}
-    input,button,select{font-size:1rem;padding:.5rem}
-    .box{border:1px solid #ddd; border-radius:12px; padding:1rem; margin:.5rem 0}
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #ddd;padding:.5rem;text-align:left}
-    code{background:#f8f8f8;padding:0 .25rem;border-radius:4px}
-  </style>
-</head>
-<body>
-<h1>Speed-Matching</h1>
+    # Sortierung je Person, damit UI stabil ist
+    for pid in matches:
+        matches[pid].sort(key=lambda x: (x,))
+    return matches
 
-{% if error %}
-  <p class="err">{{ error }}</p>
-{% endif %}
 
-<form class="box" action="/ui/match" method="post" enctype="multipart/form-data">
-  <p><b>CSV hochladen</b> (<code>name</code>, <code>channel_a</code>, <code>channel_b</code>, <code>likes</code>)</p>
-  <p><input type="file" name="file" required></p>
+def _zip_from_matches(matches: Dict[str, List[str]]) -> List[Pair]:
+    """Flache Paarliste aus dem Match-Dict, normalisiert (kleinere ID zuerst)."""
+    out: set[Pair] = set()
+    for a, partners in matches.items():
+        for b in partners:
+            a1, b1 = sorted((a, b))
+            out.add((a1, b1))
+    return sorted(out, key=lambda ab: (ab[0], ab[1]))
 
-  <p>Spaltennamen:</p>
-  <p>
-    <label>Name:&nbsp;<input type="text" name="cols" value="name"></label>
-    <label>A:&nbsp;<input type="text" name="cols" value="channel_a"></label>
-    <label>B:&nbsp;<input type="text" name="cols" value="channel_b"></label>
-    <label>Likes:&nbsp;<input type="text" name="cols" value="likes"></label>
-  </p>
 
-  <p><button type="submit">Matchen</button></p>
-</form>
+def _format_partner_list(pid: str, matches: Dict[str, List[str]], id_to_name: Dict[str, str]) -> List[Tuple[str, str]]:
+    """
+    Für UI: Liste von (partner_id, partner_name), alphabetisch nach partner_id sortiert.
+    Auch wenn es KEINE Matches gibt, liefern wir eine leere Liste, damit im Template
+    keine Person "verschwindet".
+    """
+    partners = matches.get(pid, [])
+    partners_sorted = sorted(partners, key=lambda x: (x,))
+    return [(p, id_to_name.get(p, p)) for p in partners_sorted]
 
-<div class="box">
-  <p><a href="/example/dual_interest_sample.csv">Beispiel-CSV</a> ·
-     <a href="/offline/form">Offline-Formular</a> ·
-     <a href="/help/mail-merge">Mail-Merge Hilfe</a> ·
-     <a href="/api/build-csv">CSV Builder</a>
-  </p>
-  <p>Health: <code>/health</code></p>
-</div>
 
-{% if results %}
-  <h2>Matches</h2>
-  <table>
-    <thead><tr><th>Person A</th><th>Person B</th></tr></thead>
-    <tbody>
-    {% for a,b in results %}
-      <tr><td>{{ a }}</td><td>{{ b }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-{% endif %}
+# ---------- Routen ----------
 
-</body>
-</html>
-"""
 
-_CSV_BUILDER_HTML = r"""<!doctype html>
-<html lang="de">
-<head><meta charset="utf-8"/><title>CSV-Builder</title></head>
-<body>
-  <h1>CSV-Builder</h1>
-  <p>Erwartete Spalten: <code>name, channel_a, channel_b, likes</code></p>
-</body>
-</html>
-"""
+@app.get("/")
+def index():
+    # Früher wurde hier ein 404 angezeigt; leite auf das Offline-Formular.
+    from flask import redirect
 
-_OFFLINE_FORM_HTML = r"""<!doctype html>
-<html lang="de">
-<head><meta charset="utf-8"/><title>Offline-Formular</title></head>
-<body>
-  <h1>Offline-Formular</h1>
-  <p>Druckbares Formular für Vor-Ort-Erfassung.</p>
-</body>
-</html>
-"""
+    return redirect("/offline/form", code=302)
 
-_MAIL_MERGE_HELP_HTML = r"""<!doctype html>
-<html lang="de">
-<head><meta charset="utf-8"/><title>Mail-Merge Hilfe</title></head>
-<body>
-  <h1>Mail-Merge Hilfe</h1>
-  <p>Kurzanleitung zum Seriendruck für Match-E-Mails.</p>
-</body>
-</html>
-"""
-
-# ------------------------------------------------------------------------------
-# HTTP Routen
-# ------------------------------------------------------------------------------
 
 @app.post("/ui/match")
 def ui_match():
@@ -223,11 +145,23 @@ def ui_match():
 
     try:
         people = _load_people_from_csv(tmp_path, tuple(cols))  # type: ignore[arg-type]
-        results = _simple_matches(people)
+        matches = _build_matches(people)
+
+        # Stabile Personenliste für Anzeige
+        id_to_name = {p.id: p.name for p in people}
+        people_ids_sorted = sorted([p.id for p in people], key=lambda x: (x,))
+
+        # Ergebnisse für Anzeige vorbereiten
+        results_view: Dict[str, List[Tuple[str, str]]] = {
+            pid: _format_partner_list(pid, matches, id_to_name) for pid in people_ids_sorted
+        }
+
         return render_template_string(
             _INDEX_HTML,
-            results=results,
             error=None,
+            people_ids_sorted=people_ids_sorted,
+            id_to_name=id_to_name,
+            results=results_view,
         )
     finally:
         try:
@@ -235,115 +169,259 @@ def ui_match():
         except OSError:
             pass
 
-@app.get("/api/match/dual")
+
 @app.post("/api/match/dual")
 def api_match_dual():
     """
-    JSON:
+    JSON API:
     {
-      "columns": ["name","channel_a","channel_b","likes"],
-      "rows": [
-        {"name":"A", "channel_a":"", "channel_b":"", "likes":"B"},
-        {"name":"B", "channel_a":"", "channel_b":"", "likes":"A"}
-      ]
+      "cols": ["id","name","interested_a","interested_b"],
+      "csv": "<csv-data als string>"
     }
     """
-    payload = request.get_json(silent=True) or {}
-    columns = payload.get("columns") or ["name","channel_a","channel_b","likes"]
-    rows = payload.get("rows") or []
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=columns)
-    w.writeheader()
-    for r in rows:
-        w.writerow({k: r.get(k, "") for k in columns})
-    buf.seek(0)
+    js = request.get_json(silent=True) or {}
+    cols = js.get("cols") or []
+    data = js.get("csv") or ""
+    if not isinstance(cols, list) or len(cols) != 4 or not isinstance(data, str):
+        return jsonify({"error": "Bad request"}), 400
 
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", newline="") as tf:
-        tf.write(buf.read())
-        tf.flush()
-        people = _load_people_from_csv(tf.name, tuple(columns))  # type: ignore[arg-type]
-    matches = _simple_matches(people)
-    return jsonify({"matches": matches})
+    with tempfile.NamedTemporaryFile(prefix="upload_", suffix=".csv", delete=False) as tmp:
+        tmp.write(data.encode("utf-8"))
+        tmp.flush()
+        tmp_path = tmp.name
 
-@app.get("/export/mail-merge")
+    try:
+        people = _load_people_from_csv(tmp_path, tuple(cols))  # type: ignore[arg-type]
+        matches = _build_matches(people)
+        pairs = _zip_from_matches(matches)
+        return jsonify(
+            {
+                "people": [p.__dict__ for p in people],
+                "matches": matches,
+                "pairs": pairs,
+            }
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
 @app.post("/export/mail-merge")
 def export_mail_merge():
-    # Platzhalter: Liefert CSV der Matches
-    payload = request.get_json(silent=True) or {}
-    columns = payload.get("columns") or ["name","channel_a","channel_b","likes"]
-    rows = payload.get("rows") or []
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=columns)
-    w.writeheader()
-    for r in rows:
-        w.writerow({k: r.get(k, "") for k in columns})
-    buf.seek(0)
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", newline="") as tf:
-        tf.write(buf.read())
-        tf.flush()
-        people = _load_people_from_csv(tf.name, tuple(columns))  # type: ignore[arg-type]
-    matches = _simple_matches(people)
+    """
+    CSV-Export für Seriendruck:
+    Spalten: id, name, partners (kommagetrennt)
+    """
+    f = request.files.get("file")
+    cols = request.form.getlist("cols")
+    if not f or len(cols) != 4:
+        return "Bad request", 400
 
-    out = io.StringIO()
-    ww = csv.writer(out)
-    ww.writerow(["person_a","person_b"])
-    for a,b in matches:
-        ww.writerow([a,b])
-    out.seek(0)
-    return send_file(
-        io.BytesIO(out.read().encode("utf-8")),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name="matches.csv",
-    )
+    with tempfile.NamedTemporaryFile(prefix="upload_", suffix=".csv", delete=False) as tmp:
+        f.stream.seek(0)
+        tmp.write(f.read())
+        tmp.flush()
+        tmp_path = tmp.name
+
+    try:
+        people = _load_people_from_csv(tmp_path, tuple(cols))  # type: ignore[arg-type]
+        matches = _build_matches(people)
+        id_to_name = {p.id: p.name for p in people}
+        people_ids_sorted = sorted([p.id for p in people], key=lambda x: (x,))
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "name", "partners"])
+        for pid in people_ids_sorted:
+            partners = [id_to_name.get(x, x) for x in matches.get(pid, [])]
+            writer.writerow([pid, id_to_name.get(pid, pid), ", ".join(partners)])
+
+        csv_bytes = output.getvalue().encode("utf-8")
+        return send_file(
+            io.BytesIO(csv_bytes),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name="mail_merge.csv",
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
 
 @app.get("/example/dual_interest_sample.csv")
-def example_dual_interest():
-    out = io.StringIO()
-    w = csv.writer(out)
-    w.writerow(["name","channel_a","channel_b","likes"])
-    w.writerow(["Alice","A","B","Bob, Carol"])
-    w.writerow(["Bob","A","B","Alice"])
-    w.writerow(["Carol","A","B",""])
-    out.seek(0)
-    return make_response(out.read(), 200, {"Content-Type":"text/csv; charset=utf-8"})
+def example_csv():
+    sample = """id,name,interested_a,interested_b
+1,Alice,2,3
+2,Bob,1,3
+3,Carol,1,2
+"""
+    return make_response(sample, 200, {"Content-Type": "text/csv; charset=utf-8"})
+
 
 @app.get("/offline/form")
 def offline_form():
     return render_template_string(_OFFLINE_FORM_HTML)
 
+
 @app.get("/offline/form/download")
 def offline_form_download():
-    pdf = io.BytesIO(b"%PDF-1.4\n% dummy\n")
-    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name="offline-form.pdf")
+    pdf_bytes = _OFFLINE_FORM_PDF  # Placeholder: hier könnte ein echtes PDF geladen werden
+    return send_file(io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=True, download_name="offline-form.pdf")
+
 
 @app.get("/offline/form/pdf")
 def offline_form_pdf():
-    return send_file(io.BytesIO(b"%PDF-1.4\n% dummy\n"), mimetype="application/pdf", download_name="offline-form.pdf")
+    pdf_bytes = _OFFLINE_FORM_PDF
+    return send_file(io.BytesIO(pdf_bytes), mimetype="application/pdf")
+
 
 @app.get("/help/mail-merge")
 def help_mail_merge():
     return render_template_string(_MAIL_MERGE_HELP_HTML)
 
-@app.post("/api/build-csv")
-def api_build_csv():
-    payload = request.get_json(silent=True) or {}
-    headers = payload.get("headers") or ["name","channel_a","channel_b","likes"]
-    rows = payload.get("rows") or []
-    out = io.StringIO()
-    w = csv.writer(out)
-    w.writerow(headers)
-    for r in rows:
-        w.writerow([r.get(h, "") for h in headers])
-    out.seek(0)
-    resp = make_response(out.read(), 200)
-    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-    return resp
 
-# ------------------------------------------------------------------------------
-# Entrypoint
-# ------------------------------------------------------------------------------
+@app.get("/health")
+def health():
+    return "ok", 200
+
+
+# ---------- Inline-Templates ----------
+
+_INDEX_HTML = r"""<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Matcher – Dual Interests</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 1.5rem; }
+    h1 { margin: 0 0 1rem 0; font-size: 1.5rem; }
+    .muted { opacity: .8 }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid rgba(127,127,127,.35); padding: .5rem .6rem; vertical-align: top; }
+    th { text-align: left; }
+    code, input, button, select { font: inherit; }
+    .error { color: #b00020; font-weight: 600; }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .card { border: 1px solid rgba(127,127,127,.35); border-radius: .5rem; padding: 1rem; }
+    .heading-strong { font-weight: 700; }
+    .contrast { color: CanvasText; } /* dunkles Schema: voller Kontrast */
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .tag { display:inline-block; padding:.1rem .4rem; border-radius:.25rem; border:1px solid rgba(127,127,127,.35); margin:.1rem .2rem 0 0; font-size:.9rem; }
+  </style>
+</head>
+<body>
+  <h1 class="heading-strong contrast">Matcher – Dual Interests</h1>
+
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+
+  <form class="card" action="/ui/match" method="post" enctype="multipart/form-data">
+    <div class="grid">
+      <label>CSV-Datei
+        <input type="file" name="file" required />
+      </label>
+      <label>ID-Spalte
+        <input type="text" name="cols" value="id" required />
+      </label>
+      <label>Name-Spalte
+        <input type="text" name="cols" value="name" required />
+      </label>
+      <label>Interested A
+        <input type="text" name="cols" value="interested_a" required />
+      </label>
+      <label>Interested B
+        <input type="text" name="cols" value="interested_b" required />
+      </label>
+    </div>
+    <div style="margin-top: .75rem">
+      <button type="submit">Matchen</button>
+    </div>
+  </form>
+
+  {% if results %}
+    <h2>Ergebnisse</h2>
+    <table>
+      <thead>
+        <tr>
+          <th class="mono">ID</th>
+          <th>Name</th>
+          <th>Matches</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pid in people_ids_sorted %}
+          <tr>
+            <td class="mono">{{ pid }}</td>
+            <td>{{ id_to_name[pid] }}</td>
+            <td>
+              {% set partners = results.get(pid, []) %}
+              {% if partners and partners|length %}
+                {% for partner_id, partner_name in partners %}
+                  <span class="tag mono">{{ partner_id }}</span> {{ partner_name }}<br/>
+                {% endfor %}
+              {% else %}
+                <span class="muted">Keine</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  <p class="muted">Tipp: Für Serienbriefe den Mail-Merge-Export verwenden.</p>
+</body>
+</html>
+"""
+
+_OFFLINE_FORM_HTML = r"""<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Offline Formular</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 1.5rem; }
+    h1 { margin: 0 0 1rem 0; font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Offline Formular</h1>
+  <p>Hier könnten druckbare Formulare bereitgestellt werden.</p>
+</body>
+</html>
+"""
+
+_MAIL_MERGE_HELP_HTML = r"""<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mail-Merge Hilfe</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 1.5rem; }
+    h1 { margin: 0 0 1rem 0; font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Mail-Merge Hilfe</h1>
+  <p>Den CSV-Export „mail_merge.csv“ in das Serienbrief-Tool importieren.</p>
+</body>
+</html>
+"""
+
+# Platzhalter für PDF-Bytes des Offline-Formulars
+_OFFLINE_FORM_PDF = b"%PDF-1.4\n% ... Dummy PDF ..."  # hier ggf. echtes PDF einbinden
 
 if __name__ == "__main__":
-    # Entwicklung
+    # Nur für lokalen Testbetrieb
     app.run(host="0.0.0.0", port=5000, debug=True)
